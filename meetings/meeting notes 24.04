@@ -1,0 +1,17 @@
+Some intuition: 
+
+Graph level task: image classification 
+
+Node level task: segmentation (pixel)
+
+Image classification → INR → Gaussian repre.  → find its k-NN → put it into GNN
+
+The plan is the most important thing for the next presentation, introduce the baseline. 
+
+Next week, learn GNN more, use pytorch geometric for the tutorial
+
+Task: image → use gaussians representation → classify 
+
+GNNs: Working on Gaussians, that’s what we are doing. 
+
+Baseline: use Res-Net for example, just some simple architectures for now.
