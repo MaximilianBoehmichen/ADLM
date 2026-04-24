@@ -214,7 +214,7 @@ def compute_regularization_losses(gs_model: GaussianRepresentationND,
 
 # --- Training Loop ---
 def train_gs(run_dir, gs, img_tensor,
-             max_epochs=2000, k_neighbors=10, sample_prop=0.9,
+             max_epochs=2000, k_neighbors=10, sample_prop=0.9, knn_update_rate=10,
              log_epochs=(0, 20, 100, 500, 2500)):
     shape_tensor = torch.tensor(img_tensor.shape, device=img_tensor.device)
 
@@ -242,7 +242,7 @@ def train_gs(run_dir, gs, img_tensor,
     progress_ims_psnrs = []
     for epoch in range(max_epochs):
         # Update FAISS Index periodically to track moving Gaussians
-        if epoch % 10 == 0:
+        if epoch % knn_update_rate == 0:
             gpu_index.reset()
             gpu_index.add(gs.mus.detach().cpu().numpy())
             _, top_k_idcs_np = gpu_index.search(coords_voxel_.cpu().numpy(), k_neighbors)
@@ -306,9 +306,11 @@ if __name__ == '__main__':
     # ----- Params ----------
     MAX_EPOCHS = 500                                     # Number of optimization epochs
     K_NEIGHBORHOOD = 10                                  # Number of nearby Gaussian to consider  (larger K -> more accurate but slower)
+    KNN_UPDATE_RATE = 10                                 # Number of steps after which the KNN will be updated
     COMPRESSION_FACTOR = 0.1                             # Percentage of number of parameters used relative to number pixels
     POINT_SAMPLE_PROP = 0.9                              # Percentage of total coordinate to supervise in minibatch
     VISUALIZATION_STEPS = (0, 20, 100, 500, 2500)        # Epochs at which to visualize
+
 
     # ----- Load Data
     # Test with 2D (BloodMNIST) or 3D (OrganMNIST3D)
@@ -340,4 +342,5 @@ if __name__ == '__main__':
                                                            max_epochs=MAX_EPOCHS,
                                                            k_neighbors=K_NEIGHBORHOOD,
                                                            sample_prop=POINT_SAMPLE_PROP,
+                                                           knn_update_rate=KNN_UPDATE_RATE,
                                                            log_epochs=VISUALIZATION_STEPS)
