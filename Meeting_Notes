@@ -1,0 +1,27 @@
+Notes for meeting 24.04
+
+
+
+Some intuition: 
+
+graph level task: image classification 
+
+node level task: segmentation (pixel)
+
+image classification → INR → Gaussian repre.  → find its k-NN → put it into GNN
+
+The plan is the most important thing for the next presentation, introduce the baseline. 
+
+Next week, learn GNN more, use pytorch geometric for the tutorial
+
+task: image → use gaussians representation → classify 
+
+GNNs: Working on Gaussians, that’s what we are doing. 
+
+Baseline: use Res-Net for example, just some simple architectures for now.
+
+
+
+For understanding GNN, we start by introducing some crutial tools: PyTorch & NumPy and PyG: 
+https://docs.pytorch.org/tutorials/beginner/basics/tensorqs_tutorial.html
+https://pytorch-geometric.readthedocs.io/en/latest/get_started/introduction.html
