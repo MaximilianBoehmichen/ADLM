@@ -7,7 +7,6 @@ Usage:
 import argparse
 import os
 import sys
-import tempfile
 from pathlib import Path
 import faiss
 import numpy as np
@@ -67,7 +66,8 @@ def extract_pyg_data(gs: GaussianRepresentationND, label: int, k_graph: int,
 
 
 def process_split(dataset_flag: str, split: str, output_dir: Path,
-                  k_graph: int, params: TrainingConfig, device: torch.device):
+                  k_graph: int, params: TrainingConfig, device: torch.device,
+                  logging_dir: Path = None):
     """Process all images in one MedMNIST split."""
     dataset, info, D = load_medmnist_dataset(dataset_flag, split=split)
     assert D == 2, "Only 2D datasets are supported for now."
@@ -77,9 +77,6 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
 
     params_per_gauss = 2 + 2 + 1 + 1  # mus(2) + scalings(2) + rotation(1) + color(1)
     total = len(dataset)
-
-    # Temporary run_dir for train_gs (not used with logging=False, but required arg)
-    tmp_run_dir = Path(tempfile.mkdtemp(prefix="adlm_gs_"))
 
     for i in range(total):
         out_path = split_dir / f"{i:05d}.pt"
@@ -95,7 +92,8 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
         gs = GaussianRepresentationND(num_gaussians, img_tensor.shape).to(device)
         gs.initialize_from_image(img_tensor, verbose=False)
 
-        gs, _, _, _, psnr = train_gs(tmp_run_dir, gs, img_tensor, params)
+        img_logging_dir = logging_dir / f"{i:05d}" if logging_dir else None
+        gs, _, _, _, psnr = train_gs(gs, img_tensor, params, logging_dir=img_logging_dir)
         data = extract_pyg_data(gs, label, k_graph, psnr=psnr)
         torch.save(data, out_path)
 
@@ -110,6 +108,8 @@ def main():
     parser.add_argument("--k-graph", type=int, default=15)
     parser.add_argument("--compression-factor", type=float, default=0.1)
     parser.add_argument("--max-epochs", type=int, default=500)
+    parser.add_argument("--logging-dir", type=str, default=None,
+                        help="Directory for per-image training logs (progress images, ellipses, etc.)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -118,13 +118,16 @@ def main():
     params = TrainingConfig(
         compression_factor=args.compression_factor,
         max_epochs=args.max_epochs,
-        logging=False,
     )
 
     output_dir = Path(args.output_dir)
+    logging_dir = Path(args.logging_dir) if args.logging_dir else None
     for split in args.splits:
         print(f"\n--- Processing {args.dataset} [{split}] ---")
-        process_split(args.dataset, split, output_dir, args.k_graph, params, device)
+        split_logging_dir = logging_dir / split if logging_dir else None
+        if split_logging_dir:
+            split_logging_dir.mkdir(parents=True, exist_ok=True)
+        process_split(args.dataset, split, output_dir, args.k_graph, params, device, split_logging_dir)
 
     print("\nDone.")
 

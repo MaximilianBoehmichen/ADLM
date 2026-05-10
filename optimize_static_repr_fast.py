@@ -25,7 +25,6 @@ class TrainingConfig:
     learning_rate_end: float = 1e-5                           # Ending learning rate for optimization
     compression_factor: float = 0.1                           # Percentage of parameters used relative to number of pixels
     point_sample_prop: float = 0.9                            # Percentage of total coordinates to supervise in minibatch
-    logging: bool = True                                      # If false, all prints and image logging will be skipped
     logging_vis_steps: Tuple[int, ...] = (0, 20, 100, 500)    # Epochs at which to visualize
     logging_gauss_vis_prop: float = 1.0                       # Proportion of ellipses to draw on the visualization plots
 
@@ -381,8 +380,10 @@ def compute_regularization_losses(gs_model: GaussianRepresentationND,
 
 
 # --- Training Loop ---
-def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tensor,
-             params: TrainingConfig):
+def train_gs(gs: GaussianRepresentationND, img_tensor: torch.Tensor,
+             params: TrainingConfig, logging_dir: Optional[Path] = None):
+    if logging_dir is not None:
+        logging_dir.mkdir(parents=True, exist_ok=True)
     shape_tensor = torch.tensor(img_tensor.shape, device=img_tensor.device)
 
     # 1. Create coordinate grid
@@ -415,7 +416,7 @@ def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tens
     progress_ims_psnrs = []
     loss, loss_rec, loss_scale, loss_pos = [torch.tensor([torch.inf])]*4
     for epoch in range(params.max_epochs):
-        if params.logging:
+        if logging_dir is not None:
             if epoch % 100 == 0:
                 # Progress print
                 pred = gs.forward(coords_voxel_, top_k_idcs).reshape(img_tensor.shape)
@@ -439,7 +440,7 @@ def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tens
                         image_tensor=pred.detach(),
                         subset_ratio=params.logging_gauss_vis_prop,
                         num_std=1.5,  # Distance in number of standard devs to draw ellipses
-                        run_dir=run_dir,
+                        run_dir=logging_dir,
                         file_name=f'ellipses_{epoch}.png',
                     )
 
@@ -473,9 +474,9 @@ def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tens
     psnr = kornia.metrics.psnr(img_tensor[None], pred[None], max_val=gs.img_max).item()
 
     # Logging and saving
-    if params.logging:
-        print(f"Training complete. Save path: {run_dir / 'representation.pt'}")
-        torch.save(gs.state_dict(), run_dir / 'representation.pt')
+    if logging_dir is not None:
+        print(f"Training complete. Save path: {logging_dir / 'representation.pt'}")
+        torch.save(gs.state_dict(), logging_dir / 'representation.pt')
         epoch = params.max_epochs
         progress_ims_epochs.append(epoch)
         progress_ims_psnrs.append(psnr)
@@ -488,14 +489,14 @@ def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tens
             pred = pred[..., ::4].reshape(pred.shape[-3], pred.shape[-2], 4, 4).permute(2, 0, 3, 1).reshape(4*pred.shape[-3], 4*pred.shape[-2])
             gt = gt[..., ::4].reshape(gt.shape[-3], gt.shape[-2], 4, 4).permute(2, 0, 3, 1).reshape(4*gt.shape[-3], 4*gt.shape[-2])
         progress_ims.append(pred.detach().cpu())
-        save_progress_figure(progress_ims, gt, progress_ims_epochs, progress_ims_psnrs, run_dir / "progress.png")
+        save_progress_figure(progress_ims, gt, progress_ims_epochs, progress_ims_psnrs, logging_dir / "progress.png")
         if gs.D == 2:
             visualize_2d_gaussians(
                 gs_model=gs,
                 image_tensor=pred.detach(),
                 subset_ratio=params.logging_gauss_vis_prop,
                 num_std=1.5,  # Distance in number of standard devs to draw ellipses
-                run_dir=run_dir,
+                run_dir=logging_dir,
                 file_name=f'ellipses_{epoch}.png',
             )
     return gs, pred, coords_voxel_, top_k_idcs, psnr
@@ -521,10 +522,9 @@ if __name__ == '__main__':
     # ----- Init Model
     gs = GaussianRepresentationND(num_gaussians, img.shape).to(device)
     gs.initialize_from_image(img)
-    logging_dir = 'logging'
     run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")[:-3]
     run_id += f"_{D}D"
-    run_dir = Path(logging_dir) / run_id
+    run_dir = Path('logging') / run_id
     run_dir.mkdir(exist_ok=True, parents=True)
     print('Run name:', run_dir)
     print(f"Image shape: {img.shape}, num pixels: {np.prod(img.shape)}, "
@@ -532,4 +532,4 @@ if __name__ == '__main__':
           f"num neighbors: {params.k_neighborhood}")
 
     # ---- Optimize Representation
-    gs, pred_image, coords_, final_idcs, _ = train_gs(run_dir, gs, img, params)
+    gs, pred_image, coords_, final_idcs, _ = train_gs(gs, img, params, logging_dir=run_dir)

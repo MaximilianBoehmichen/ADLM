@@ -153,6 +153,9 @@ def visualize_2d_gaussians(gs_model, image_tensor, subset_ratio=0.35, num_std=1.
 
 def visualize_pt_file(pt_path, save_path=None, subset_ratio=1.0, num_std=1.0, figsize=(10, 10)):
     """
+    TODO: AI-Generated Helper Function. Can probably be removed if not needed!!!!!
+
+
     Visualize a saved PyG .pt file containing Gaussian graph data.
 
     The .pt file is expected to have data.x with columns [mus(2) | scalings(2) | rotation(1) | color(1)].
