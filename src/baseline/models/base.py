@@ -9,7 +9,7 @@ training loop relies on.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -122,9 +122,9 @@ class BaseModel(nn.Module):
         torch.save(
             {
                 "state_dict": self.state_dict(),
-                "metrics": metrics.__dict__,
+                "metrics": asdict(metrics),
                 "num_classes": self.num_classes,
-                "normalization": self.normalization.__dict__,
+                "normalization": asdict(self.normalization),
                 "class_name": type(self).__name__,
             },
             path,
