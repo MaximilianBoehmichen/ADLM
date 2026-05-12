@@ -239,10 +239,10 @@ def build_dataloaders(config: Config, model: BaseModel) -> Loaders:
         split="train",
         download=True,
         root=str(data_root),
-        size=224,
+        size=config.image_size,
     )
-    raw_val = dataset_cls(split="val", download=True, root=str(data_root), size=224)
-    raw_test = dataset_cls(split="test", download=True, root=str(data_root), size=224)
+    raw_val = dataset_cls(split="val", download=True, root=str(data_root), size=config.image_size)
+    raw_test = dataset_cls(split="test", download=True, root=str(data_root), size=config.image_size)
 
     if config.finetune:
         mean, std = model.normalization.mean, model.normalization.std
