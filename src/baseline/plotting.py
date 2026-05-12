@@ -11,10 +11,9 @@ import json
 from pathlib import Path
 
 import matplotlib
+import matplotlib.pyplot as plt
 
 matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 
 
 def _unzip(series: list[tuple[float, float]]) -> tuple[list[float], list[float]]:

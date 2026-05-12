@@ -7,6 +7,8 @@ delegates to :func:`baseline.train.train`.
 from __future__ import annotations
 
 import random
+import sys
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -14,6 +16,7 @@ from torchinfo import summary
 
 from dataclasses import asdict
 
+from baseline.analyze import analyze
 from baseline.cli import Config, parse_args
 from baseline.data import build_dataloaders, dataset_info
 from baseline.device import resolve_device
@@ -50,7 +53,22 @@ def _print_config(config: Config) -> None:
 
 
 def main() -> None:
-    """Parse the CLI, build everything and start the training run."""
+    """Parse the CLI, build everything and start the training run.
+
+    When invoked as ``--analyze PATH`` (and only that flag), prints the
+    stored checkpoint statistics and regenerates the history plots
+    without touching the training pipeline.
+    """
+    argv = sys.argv[1:]
+    if "--analyze" in argv:
+        if len(argv) != 2 or argv[0] != "--analyze":
+            raise SystemExit(
+                "--analyze must be the only argument: "
+                "uv run python -m baseline.main --analyze PATH/TO/checkpoint.pt",
+            )
+        analyze(Path(argv[1]))
+        return
+
     config = parse_args()
     device = resolve_device()
     config.device = str(device)
