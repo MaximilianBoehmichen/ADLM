@@ -311,7 +311,7 @@ class GaussianRepresentationND(nn.Module):
 
 
 # --- Data Loading Utility ---
-def load_medmnist_dataset(dataset_flag="pneumoniamnist", split="train", download=True, size=224):
+def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=True, size=224):
     """Load a full MedMNIST dataset for a given split.
 
     Returns the dataset object, the INFO metadata dict, and the spatial dimension D.

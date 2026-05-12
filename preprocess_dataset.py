@@ -1,6 +1,6 @@
 """
 Usage:
-    python preprocess_dataset.py --dataset pneumoniamnist --splits train val test
+    python preprocess_dataset.py --dataset chestmnist --splits train val test
     python preprocess_dataset.py --dataset pneumoniamnist --splits test --max-epochs 50
 """
 
@@ -26,7 +26,18 @@ if sys.platform == "darwin":
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 
-def extract_pyg_data(gs: GaussianRepresentationND, label: int, k_graph: int,
+def build_label_tensor(label_np: np.ndarray, task: str) -> torch.Tensor:
+    """Build the graph-level y tensor according to the MedMNIST task type.
+
+    multi-label, binary-class -> float (1, C) for BCEWithLogitsLoss
+    everything else           -> long  (1,)   for CrossEntropyLoss
+    """
+    if task == "multi-label, binary-class":
+        return torch.tensor(label_np, dtype=torch.float32).reshape(1, -1)
+    return torch.tensor([int(np.asarray(label_np).squeeze())], dtype=torch.long)
+
+
+def extract_pyg_data(gs: GaussianRepresentationND, y: torch.Tensor, k_graph: int,
                      psnr: float = None) -> Data:
     """Extract a PyG Data object from a trained GaussianRepresentationND model.
 
@@ -58,7 +69,7 @@ def extract_pyg_data(gs: GaussianRepresentationND, label: int, k_graph: int,
         x=x,
         pos=mus,
         edge_index=edge_index,
-        y=torch.tensor([label], dtype=torch.long),
+        y=y,
     )
     if psnr is not None:
         data.psnr = torch.tensor([psnr], dtype=torch.float32)
@@ -71,6 +82,7 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
     """Process all images in one MedMNIST split."""
     dataset, info, D = load_medmnist_dataset(dataset_flag, split=split)
     assert D == 2, "Only 2D datasets are supported for now."
+    task = info["task"]
 
     split_dir = output_dir / dataset_flag / split
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -84,7 +96,7 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
             continue
 
         img_pil, label_np = dataset[i]
-        label = int(label_np.squeeze())
+        y = build_label_tensor(label_np, task)
         img_tensor = preprocess_medmnist_image(img_pil, D).to(device)
 
         num_gaussians = int(np.prod(img_tensor.shape) * params.compression_factor / params_per_gauss)
@@ -94,7 +106,7 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
 
         img_logging_dir = logging_dir / f"{i:05d}" if logging_dir else None
         gs, _, _, _, psnr = train_gs(gs, img_tensor, params, logging_dir=img_logging_dir)
-        data = extract_pyg_data(gs, label, k_graph, psnr=psnr)
+        data = extract_pyg_data(gs, y, k_graph, psnr=psnr)
         torch.save(data, out_path)
 
         print(f"[{split}] {i + 1}/{total} | PSNR: {psnr:.1f} dB | {out_path}")
@@ -102,7 +114,7 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess MedMNIST → Gaussian .pt files")
-    parser.add_argument("--dataset", type=str, default="pneumoniamnist")
+    parser.add_argument("--dataset", type=str, default="chestmnist")
     parser.add_argument("--splits", nargs="+", default=["train", "val", "test"])
     parser.add_argument("--output-dir", type=str, default="data")
     parser.add_argument("--k-graph", type=int, default=15)
