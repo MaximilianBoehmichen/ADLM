@@ -239,7 +239,7 @@ def build_dataloaders(config: Config, model: BaseModel) -> Loaders:
         split="train",
         download=True,
         root=str(data_root),
-        size=28,
+        size=224,
     )
     raw_val = dataset_cls(split="val", download=True, root=str(data_root), size=224)
     raw_test = dataset_cls(split="test", download=True, root=str(data_root), size=224)
