@@ -78,7 +78,8 @@ def extract_pyg_data(gs: GaussianRepresentationND, y: torch.Tensor, k_graph: int
 
 def process_split(dataset_flag: str, split: str, output_dir: Path,
                   k_graph: int, params: TrainingConfig, device: torch.device,
-                  logging_dir: Path = None):
+                  logging_dir: Path = None,
+                  start_idx: int = 0, end_idx: int = None):
     """Process all images in one MedMNIST split."""
     dataset, info, D = load_medmnist_dataset(dataset_flag, split=split)
     assert D == 2, "Only 2D datasets are supported for now."
@@ -89,8 +90,10 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
 
     params_per_gauss = 2 + 2 + 1 + 1  # mus(2) + scalings(2) + rotation(1) + color(1)
     total = len(dataset)
+    start = max(0, start_idx)
+    end = total if end_idx is None else min(total, end_idx)
 
-    for i in range(total):
+    for i in range(start, end):
         out_path = split_dir / f"{i:05d}.pt"
         if out_path.exists():
             continue
@@ -109,7 +112,7 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
         data = extract_pyg_data(gs, y, k_graph, psnr=psnr)
         torch.save(data, out_path)
 
-        print(f"[{split}] {i + 1}/{total} | PSNR: {psnr:.1f} dB | {out_path}")
+        print(f"[{split}] {i + 1}/{total} (range {start}:{end}) | PSNR: {psnr:.1f} dB | {out_path}")
 
 
 def main():
@@ -122,6 +125,10 @@ def main():
     parser.add_argument("--max-epochs", type=int, default=500)
     parser.add_argument("--logging-dir", type=str, default=None,
                         help="Directory for per-image training logs (progress images, ellipses, etc.)")
+    parser.add_argument("--start-idx", type=int, default=0,
+                        help="First image index to process (inclusive). Use with --end-idx to shard across jobs.")
+    parser.add_argument("--end-idx", type=int, default=None,
+                        help="Last image index to process (exclusive). Defaults to end of split.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -139,7 +146,8 @@ def main():
         split_logging_dir = logging_dir / split if logging_dir else None
         if split_logging_dir:
             split_logging_dir.mkdir(parents=True, exist_ok=True)
-        process_split(args.dataset, split, output_dir, args.k_graph, params, device, split_logging_dir)
+        process_split(args.dataset, split, output_dir, args.k_graph, params, device, split_logging_dir,
+                      start_idx=args.start_idx, end_idx=args.end_idx)
 
     print("\nDone.")
 
