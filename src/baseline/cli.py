@@ -42,10 +42,8 @@ class Config:
             initialised and ``freeze_epochs`` is ignored.
         freeze_epochs: Number of initial epochs during which every parameter
             outside of the classification head stays frozen.
-        lr: Reference learning rate (peak LR after warmup) specified for an
-            accumulating batch size of 256. The effective LR handed to the
-            optimiser is ``lr * accum_batch_size / 256`` when the loss is not
-            batch-size agnostic, otherwise ``lr`` is used unchanged.
+        lr: Peak learning rate reached at the end of warmup. Used as-is by
+            the optimiser regardless of batch size.
         strategy: Training strategy controlling optimiser + LR schedule; one
             of :data:`STRATEGY_CHOICES`. ``strategy1`` is AdamW + 10-epoch
             linear warmup followed by cosine annealing.
@@ -151,11 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--lr",
         type=float,
         default=1e-3,
-        help=(
-            "Reference peak learning rate for an accumulating batch size of "
-            "256. Scaled linearly by accum_batch_size / 256 only when the "
-            "loss is not batch-size agnostic."
-        ),
+        help="Peak learning rate reached at the end of warmup.",
     )
     parser.add_argument(
         "--strategy",

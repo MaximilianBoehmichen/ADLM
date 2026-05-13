@@ -84,21 +84,17 @@ class Strategy:
     start_lr_ref: float
     min_lr_ref: float
 
-    def effective_lr(self, lr_ref: float, lr_scale: float) -> float:
-        return lr_ref * lr_scale
-
     def lr_at_step(
         self,
         step: int,
         warmup_steps: int,
         total_steps: int,
-        lr_ref: float,
-        lr_scale: float,
+        lr: float,
     ) -> float:
         """Compute the LR for optimiser step index ``step`` (0-based)."""
-        peak = lr_ref * lr_scale
-        start = self.start_lr_ref * lr_scale
-        end = self.min_lr_ref * lr_scale
+        peak = lr
+        start = self.start_lr_ref
+        end = self.min_lr_ref
         if warmup_steps > 0 and step < warmup_steps:
             return start + (peak - start) * (step / warmup_steps)
         cosine_len = max(1, total_steps - warmup_steps)
@@ -288,12 +284,6 @@ def train(
     config.model_dir.mkdir(parents=True, exist_ok=True)
 
     strategy = _get_strategy(config.strategy)
-    # BCEWithLogitsLoss with reduction='mean' has gradient magnitude
-    # independent of batch size, so no LR scaling is needed. For any future
-    # non-mean reduction, scale linearly by accum_batch_size/256.
-    loss_is_batch_agnostic = getattr(criterion, "reduction", "mean") == "mean"
-    lr_scale = 1.0 if loss_is_batch_agnostic else config.accum_batch_size / 256.0
-    effective_lr = strategy.effective_lr(config.lr, lr_scale)
 
     steps_per_epoch = len(loaders.train)
     optimizer_steps_per_epoch = max(1, steps_per_epoch // config.accumulation_steps)
@@ -304,12 +294,12 @@ def train(
         model.freeze_backbone()
     else:
         model.unfreeze_backbone()
-    optimizer = strategy.optimizer_factory(model.trainable_parameters(), effective_lr)
+    optimizer = strategy.optimizer_factory(model.trainable_parameters(), config.lr)
     global_opt_step = 0
     _set_lr(
         optimizer,
         strategy.lr_at_step(
-            global_opt_step, warmup_opt_steps, total_opt_steps, config.lr, lr_scale,
+            global_opt_step, warmup_opt_steps, total_opt_steps, config.lr,
         ),
     )
 
@@ -327,7 +317,7 @@ def train(
                 model.trainable_parameters(),
                 strategy.lr_at_step(
                     global_opt_step, warmup_opt_steps, total_opt_steps,
-                    config.lr, lr_scale,
+                    config.lr,
                 ),
             )
 
@@ -359,7 +349,7 @@ def train(
                 global_opt_step += 1
                 current_lr = strategy.lr_at_step(
                     global_opt_step, warmup_opt_steps, total_opt_steps,
-                    config.lr, lr_scale,
+                    config.lr,
                 )
                 _set_lr(optimizer, current_lr)
                 frac_epoch = (
@@ -383,7 +373,7 @@ def train(
             global_opt_step += 1
             current_lr = strategy.lr_at_step(
                 global_opt_step, warmup_opt_steps, total_opt_steps,
-                config.lr, lr_scale,
+                config.lr,
             )
             _set_lr(optimizer, current_lr)
             frac_epoch = float(epoch)
@@ -479,11 +469,9 @@ def train(
             "model": config.model,
             "strategy": config.strategy,
             "lr": config.lr,
-            "effective_lr": effective_lr,
-            "lr_scale": lr_scale,
             "weight_decay": strategy.weight_decay,
             "warmup_epochs": strategy.warmup_epochs,
-            "min_lr": strategy.min_lr_ref * lr_scale,
+            "min_lr": strategy.min_lr_ref,
             "batch_size": config.batch_size,
             "accum_batch_size": config.accum_batch_size,
             "finetune": int(config.finetune),
