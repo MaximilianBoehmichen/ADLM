@@ -254,6 +254,7 @@ def _save_checkpoint(
         extra={
             "per_class_auc": metrics.per_class_auc,
             "per_class_accuracy": metrics.per_class_accuracy,
+            "config": asdict(config),
         },
     )
     model.save(path, ckpt)
