@@ -4,8 +4,10 @@ Features:
 - Gradient accumulation with a fractional-epoch x-axis for TensorBoard, so
   runs with different ``accum_batch_size`` line up visually.
 - Two-phase fine-tuning: the backbone is frozen for the first
-  ``freeze_epochs`` epochs at ``lr_frozen`` and trained at ``lr_unfrozen``
-  afterwards.
+  ``freeze_epochs`` epochs and unfrozen afterwards. The training strategy
+  (optimiser + LR schedule) is shared across both phases; the optimiser is
+  rebuilt at the unfreeze boundary while the LR schedule continues over the
+  global optimiser-step counter.
 - Per-epoch evaluation on the ``val`` split, early stopping on the overall
   AUC, final evaluation on the ``test`` split once on the best checkpoint.
 - TensorBoard logs and a ``history.json`` snapshot for offline plotting.
@@ -14,7 +16,9 @@ Features:
 from __future__ import annotations
 
 import json
+import math
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -69,29 +73,63 @@ class History:
             json.dump(asdict(self), f, indent=2)
 
 
-def _build_optimizer(
-    name: str,
-    params: list[nn.Parameter],
-    lr: float,
-) -> torch.optim.Optimizer:
-    """Instantiate an Adam/AdamW optimiser over ``params``.
+@dataclass(slots=True, frozen=True)
+class Strategy:
+    """Optimiser + LR schedule bundle selected via ``--strategy``."""
 
-    Args:
-        name: ``"adam"`` or ``"adamw"``.
-        params: Parameters the optimiser should update.
-        lr: Initial learning rate.
+    name: str
+    optimizer_factory: Callable[[Iterable[nn.Parameter], float], torch.optim.Optimizer]
+    weight_decay: float
+    warmup_epochs: int
+    start_lr_ref: float
+    min_lr_ref: float
 
-    Returns:
-        The constructed optimiser.
+    def effective_lr(self, lr_ref: float, lr_scale: float) -> float:
+        return lr_ref * lr_scale
 
-    Raises:
-        ValueError: If ``name`` is not a recognised optimiser.
-    """
-    if name == "adam":
-        return torch.optim.Adam(params, lr=lr)
-    if name == "adamw":
-        return torch.optim.AdamW(params, lr=lr)
-    raise ValueError(f"Unsupported optimizer {name!r}.")
+    def lr_at_step(
+        self,
+        step: int,
+        warmup_steps: int,
+        total_steps: int,
+        lr_ref: float,
+        lr_scale: float,
+    ) -> float:
+        """Compute the LR for optimiser step index ``step`` (0-based)."""
+        peak = lr_ref * lr_scale
+        start = self.start_lr_ref * lr_scale
+        end = self.min_lr_ref * lr_scale
+        if warmup_steps > 0 and step < warmup_steps:
+            return start + (peak - start) * (step / warmup_steps)
+        cosine_len = max(1, total_steps - warmup_steps)
+        progress = min(1.0, (step - warmup_steps) / cosine_len)
+        return end + 0.5 * (peak - end) * (1.0 + math.cos(math.pi * progress))
+
+
+_STRATEGIES: dict[str, Strategy] = {
+    "strategy1": Strategy(
+        name="strategy1",
+        optimizer_factory=lambda params, lr: torch.optim.AdamW(
+            params, lr=lr, weight_decay=0.05,
+        ),
+        weight_decay=0.05,
+        warmup_epochs=10,
+        start_lr_ref=1e-6,
+        min_lr_ref=1e-5,
+    ),
+}
+
+
+def _get_strategy(name: str) -> Strategy:
+    try:
+        return _STRATEGIES[name]
+    except KeyError as err:
+        raise ValueError(f"Unknown training strategy {name!r}.") from err
+
+
+def _set_lr(optimizer: torch.optim.Optimizer, lr: float) -> None:
+    for group in optimizer.param_groups:
+        group["lr"] = lr
 
 
 def _build_criterion(is_multilabel: bool) -> nn.Module:
@@ -210,7 +248,7 @@ def _save_checkpoint(
         device: Device the model is currently on, stored in the
             checkpoint for later inspection.
     """
-    path = config.model_dir / f"epoch_{epoch:03d}_auc_{metrics.auc:.4f}.pt"
+    path = config.model_dir / f"best.pt"
     ckpt = CheckpointMetrics(
         epoch=epoch,
         val_auc=metrics.auc,
@@ -249,30 +287,48 @@ def train(
     history = History()
     config.model_dir.mkdir(parents=True, exist_ok=True)
 
-    if config.finetune:
-        model.freeze_backbone()
-        current_lr = config.lr_frozen
-    else:
-        model.unfreeze_backbone()
-        current_lr = config.lr_unfrozen
-    optimizer = _build_optimizer(config.optimizer, model.trainable_parameters(), current_lr)
+    strategy = _get_strategy(config.strategy)
+    # BCEWithLogitsLoss with reduction='mean' has gradient magnitude
+    # independent of batch size, so no LR scaling is needed. For any future
+    # non-mean reduction, scale linearly by accum_batch_size/256.
+    loss_is_batch_agnostic = getattr(criterion, "reduction", "mean") == "mean"
+    lr_scale = 1.0 if loss_is_batch_agnostic else config.accum_batch_size / 256.0
+    effective_lr = strategy.effective_lr(config.lr, lr_scale)
 
     steps_per_epoch = len(loaders.train)
     optimizer_steps_per_epoch = max(1, steps_per_epoch // config.accumulation_steps)
+    total_opt_steps = config.epochs * optimizer_steps_per_epoch
+    warmup_opt_steps = strategy.warmup_epochs * optimizer_steps_per_epoch
+
+    if config.finetune:
+        model.freeze_backbone()
+    else:
+        model.unfreeze_backbone()
+    optimizer = strategy.optimizer_factory(model.trainable_parameters(), effective_lr)
+    global_opt_step = 0
+    _set_lr(
+        optimizer,
+        strategy.lr_at_step(
+            global_opt_step, warmup_opt_steps, total_opt_steps, config.lr, lr_scale,
+        ),
+    )
 
     best_auc = -float("inf")
     best_path: Path | None = None
     best_epoch = 0
     epochs_without_improvement = 0
+    last_epoch_run = 0
     training_start = time.monotonic()
 
     for epoch in range(1, config.epochs + 1):
         if config.finetune and epoch == config.freeze_epochs + 1:
             model.unfreeze_backbone()
-            optimizer = _build_optimizer(
-                config.optimizer,
+            optimizer = strategy.optimizer_factory(
                 model.trainable_parameters(),
-                config.lr_unfrozen,
+                strategy.lr_at_step(
+                    global_opt_step, warmup_opt_steps, total_opt_steps,
+                    config.lr, lr_scale,
+                ),
             )
 
         model.train()
@@ -300,12 +356,19 @@ def train(
                 optimizer.zero_grad(set_to_none=True)
                 step_loss = running_loss / microbatch_in_step
                 optimizer_step_in_epoch += 1
+                global_opt_step += 1
+                current_lr = strategy.lr_at_step(
+                    global_opt_step, warmup_opt_steps, total_opt_steps,
+                    config.lr, lr_scale,
+                )
+                _set_lr(optimizer, current_lr)
                 frac_epoch = (
                     epoch
                     - 1
                     + optimizer_step_in_epoch / optimizer_steps_per_epoch
                 )
                 writer.add_scalar("loss/train", step_loss, _to_step(frac_epoch))
+                writer.add_scalar("lr", current_lr, _to_step(frac_epoch))
                 history.train_loss.append((frac_epoch, step_loss))
                 pbar.set_postfix(loss=f"{step_loss:.4f}")
                 running_loss = 0.0
@@ -317,8 +380,15 @@ def train(
             optimizer.zero_grad(set_to_none=True)
             step_loss = running_loss / microbatch_in_step
             optimizer_step_in_epoch += 1
+            global_opt_step += 1
+            current_lr = strategy.lr_at_step(
+                global_opt_step, warmup_opt_steps, total_opt_steps,
+                config.lr, lr_scale,
+            )
+            _set_lr(optimizer, current_lr)
             frac_epoch = float(epoch)
             writer.add_scalar("loss/train", step_loss, _to_step(frac_epoch))
+            writer.add_scalar("lr", current_lr, _to_step(frac_epoch))
             history.train_loss.append((frac_epoch, step_loss))
 
         val_metrics = _evaluate(
@@ -340,6 +410,8 @@ def train(
             f"[epoch {epoch}] val loss={val_metrics.loss:.4f} "
             f"acc={val_metrics.accuracy:.4f} auc={val_metrics.auc:.4f}",
         )
+
+        last_epoch_run = epoch
 
         if val_metrics.auc > best_auc:
             best_auc = val_metrics.auc
@@ -401,23 +473,35 @@ def train(
     final_path = config.model_dir / f"best_epoch_{best_epoch:03d}_with_test.pt"
     best_model.save(final_path, final_ckpt)
 
+    total_train_seconds = time.monotonic() - training_start
     writer.add_hparams(
         {
             "model": config.model,
-            "optimizer": config.optimizer,
-            "lr_frozen": config.lr_frozen,
-            "lr_unfrozen": config.lr_unfrozen,
+            "strategy": config.strategy,
+            "lr": config.lr,
+            "effective_lr": effective_lr,
+            "lr_scale": lr_scale,
+            "weight_decay": strategy.weight_decay,
+            "warmup_epochs": strategy.warmup_epochs,
+            "min_lr": strategy.min_lr_ref * lr_scale,
             "batch_size": config.batch_size,
             "accum_batch_size": config.accum_batch_size,
             "finetune": int(config.finetune),
             "freeze_epochs": config.freeze_epochs,
             "rotation": config.rotation_degrees,
             "jitter": config.jitter,
+            "image_size": config.image_size,
+            "epochs": config.epochs,
+            "epochs_run": last_epoch_run,
+            "seed": config.seed,
+            "device": str(device),
         },
         {
             "hparam/test_auc": test_metrics.auc,
             "hparam/test_accuracy": test_metrics.accuracy,
             "hparam/best_val_auc": best_auc,
+            "hparam/best_epoch": best_epoch,
+            "hparam/train_time_seconds": total_train_seconds,
         },
     )
     writer.close()

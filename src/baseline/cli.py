@@ -21,7 +21,7 @@ MODEL_CHOICES: tuple[str, ...] = (
     "deit_tiny",
 )
 
-OPTIMIZER_CHOICES: tuple[str, ...] = ("adam", "adamw")
+STRATEGY_CHOICES: tuple[str, ...] = ("strategy1",)
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -42,9 +42,13 @@ class Config:
             initialised and ``freeze_epochs`` is ignored.
         freeze_epochs: Number of initial epochs during which every parameter
             outside of the classification head stays frozen.
-        lr_frozen: Learning rate used while the backbone is frozen.
-        lr_unfrozen: Learning rate used after the backbone has been unfrozen.
-        optimizer: Optimiser to use; one of :data:`OPTIMIZER_CHOICES`.
+        lr: Reference learning rate (peak LR after warmup) specified for an
+            accumulating batch size of 256. The effective LR handed to the
+            optimiser is ``lr * accum_batch_size / 256`` when the loss is not
+            batch-size agnostic, otherwise ``lr`` is used unchanged.
+        strategy: Training strategy controlling optimiser + LR schedule; one
+            of :data:`STRATEGY_CHOICES`. ``strategy1`` is AdamW + 10-epoch
+            linear warmup followed by cosine annealing.
         batch_size: Mini-batch size handed to the data loader.
         accum_batch_size: Effective batch size after gradient accumulation.
             Must be a multiple of ``batch_size``.
@@ -69,9 +73,8 @@ class Config:
     patience: int
     finetune: bool
     freeze_epochs: int
-    lr_frozen: float
-    lr_unfrozen: float
-    optimizer: str
+    lr: float
+    strategy: str
     batch_size: int
     accum_batch_size: int
     rotation_degrees: float
@@ -126,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--dataset", default="chestmnist")
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument(
         "--patience",
         type=int,
@@ -141,15 +144,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--freeze-epochs",
         type=int,
-        default=3,
+        default=100,
         help="Epochs to keep the backbone frozen while fine-tuning.",
     )
-    parser.add_argument("--lr-frozen", type=float, default=1e-3)
-    parser.add_argument("--lr-unfrozen", type=float, default=1e-4)
     parser.add_argument(
-        "--optimizer",
-        choices=OPTIMIZER_CHOICES,
-        default="adamw",
+        "--lr",
+        type=float,
+        default=1e-3,
+        help=(
+            "Reference peak learning rate for an accumulating batch size of "
+            "256. Scaled linearly by accum_batch_size / 256 only when the "
+            "loss is not batch-size agnostic."
+        ),
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=STRATEGY_CHOICES,
+        default="strategy1",
+        help=(
+            "Training strategy (optimiser + LR schedule). strategy1: AdamW "
+            "with weight_decay=0.05, 10-epoch linear warmup from 1e-6 to lr, "
+            "then cosine annealing down to 1e-5 over the remaining epochs."
+        ),
     )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--accum-batch-size", type=int, default=128)
@@ -187,9 +203,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
         patience=args.patience,
         finetune=not args.from_scratch,
         freeze_epochs=args.freeze_epochs,
-        lr_frozen=args.lr_frozen,
-        lr_unfrozen=args.lr_unfrozen,
-        optimizer=args.optimizer,
+        lr=args.lr,
+        strategy=args.strategy,
         batch_size=args.batch_size,
         accum_batch_size=args.accum_batch_size,
         rotation_degrees=args.rotation_degrees,
