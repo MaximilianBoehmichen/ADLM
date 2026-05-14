@@ -312,7 +312,13 @@ class GaussianRepresentationND(nn.Module):
 
 
 # --- Data Loading Utility ---
-def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=True, size=224):
+def load_medmnist_dataset(
+        dataset_flag="chestmnist",
+        split="train", download=True,
+        size=224,
+        *,
+        root: str = str(Path(__file__).resolve().parent / "data" / "medmnist_cache")
+):
     """Load a full MedMNIST dataset for a given split.
 
     Returns the dataset object, the INFO metadata dict, and the spatial dimension D.
@@ -320,7 +326,12 @@ def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=Tru
     import medmnist as medmnist_module
     info = INFO[dataset_flag]
     DataClass = getattr(medmnist_module, info['python_class'])
-    dataset = DataClass(split=split, download=download, size=size)
+    dataset = DataClass(
+        split=split,
+        download=download,
+        root=root,
+        size=size
+    )
     D = 3 if "3d" in dataset_flag.lower() else 2
     return dataset, info, D
 
@@ -403,7 +414,7 @@ def train_gs(gs: GaussianRepresentationND, img_tensor: torch.Tensor,
 
     # 3. FAISS Setup (GPU if available, else CPU)
     cpu_index = faiss.IndexFlatL2(D)
-    if hasattr(faiss, 'StandardGpuResources'):
+    if hasattr(faiss, 'get_num_gpus') and faiss.get_num_gpus() > 0:
         res = faiss.StandardGpuResources()
         faiss_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
     else:
