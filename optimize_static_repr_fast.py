@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import faiss
+import faiss.contrib.torch_utils  # CRITICAL: Enables PyTorch interoperability
 from medmnist import INFO
 
 from vis_utils import visualize_2d_gaussians, save_image, save_progress_figure
