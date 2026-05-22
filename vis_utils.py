@@ -149,3 +149,89 @@ def visualize_2d_gaussians(gs_model, image_tensor, subset_ratio=0.35, num_std=1.
     path.parent.mkdir(exist_ok=True, parents=True)
     plt.savefig(path)
     plt.close(fig)
+
+
+def visualize_pt_file(pt_path, save_path=None, subset_ratio=1.0, num_std=1.0, figsize=(10, 10)):
+    """
+    TODO: AI-Generated Helper Function. Can probably be removed if not needed!!!!!
+
+
+    Visualize a saved PyG .pt file containing Gaussian graph data.
+
+    The .pt file is expected to have data.x with columns [mus(2) | scalings(2) | rotation(1) | color(1)].
+    Optionally draws KNN edges from data.edge_index.
+
+    Args:
+        pt_path: Path to the .pt file.
+        save_path: Where to save the image (default: same path with .png extension).
+        subset_ratio: Fraction of Gaussians to draw (0-1).
+        num_std: Number of standard deviations for ellipse radius.
+        figsize: Figure size.
+    """
+    data = torch.load(pt_path, weights_only=False)
+
+    mus = data.x[:, :2].numpy()
+    scalings = data.x[:, 2:4].numpy()
+    rotations = data.x[:, 4].numpy()
+    colors = data.x[:, 5].numpy()
+    edge_index = data.edge_index.numpy() if data.edge_index is not None else None
+
+    K = mus.shape[0]
+    label = data.y.item()
+    psnr = data.psnr.item() if hasattr(data, 'psnr') and data.psnr is not None else None
+
+    num_to_draw = int(K * subset_ratio)
+    sampled_idcs = np.random.choice(K, num_to_draw, replace=False) if subset_ratio < 1.0 else np.arange(K)
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    ax.set_facecolor('black')
+
+    # Draw KNN edges
+    if edge_index is not None:
+        E = edge_index.shape[1]
+        max_edges = min(E, 3000)
+        edge_subset = np.random.choice(E, max_edges, replace=False) if E > max_edges else np.arange(E)
+        for e in edge_subset:
+            src, dst = edge_index[0, e], edge_index[1, e]
+            ax.plot([mus[src, 1], mus[dst, 1]], [mus[src, 0], mus[dst, 0]],
+                    color='cyan', alpha=0.06, linewidth=0.3)
+
+    for idx in sampled_idcs:
+        mu = mus[idx]
+        # scalings are stored directly (not inverse), so sigma = scaling
+        sigma_y = scalings[idx, 0]
+        sigma_x = scalings[idx, 1]
+        width = 2.0 * num_std * sigma_x
+        height = 2.0 * num_std * sigma_y
+        angle_deg = np.degrees(-rotations[idx])
+        c = float(np.clip(colors[idx], 0, 1))
+
+        ellipse = Ellipse(
+            xy=(mu[1], mu[0]),
+            width=width, height=height,
+            angle=angle_deg,
+            edgecolor='red',
+            facecolor=(c, c, c, 0.8),
+            linewidth=0.5,
+        )
+        ax.add_patch(ellipse)
+
+    y_max = mus[:, 0].max() + 10
+    x_max = mus[:, 1].max() + 10
+    ax.set_xlim(-5, x_max)
+    ax.set_ylim(y_max, -5)
+    ax.set_aspect('equal')
+    ax.axis('off')
+
+    title = f"{K} Gaussians | Label: {label}"
+    if psnr is not None:
+        title += f" | PSNR: {psnr:.1f} dB"
+    ax.set_title(title, color='white')
+    fig.patch.set_facecolor('black')
+
+    plt.tight_layout()
+    if save_path is None:
+        save_path = str(Path(pt_path).with_suffix('.png'))
+    plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='black')
+    plt.close(fig)
+    print(f"Saved visualization to {save_path}")

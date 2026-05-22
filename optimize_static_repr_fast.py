@@ -26,7 +26,6 @@ class TrainingConfig:
     learning_rate_end: float = 1e-5                           # Ending learning rate for optimization
     compression_factor: float = 0.1                           # Percentage of parameters used relative to number of pixels
     point_sample_prop: float = 0.9                            # Percentage of total coordinates to supervise in minibatch
-    logging: bool = True                                      # If false, all prints and image logging will be skipped
     logging_vis_steps: Tuple[int, ...] = (0, 20, 100, 500)    # Epochs at which to visualize
     logging_gauss_vis_prop: float = 1.0                       # Proportion of ellipses to draw on the visualization plots
 
@@ -133,9 +132,10 @@ class GaussianRepresentationND(nn.Module):
     def scalings(self):
         return 1 / self.scalings_inv
 
-    def initialize_from_image(self, image_tensor, lambda_init=0.3):
+    def initialize_from_image(self, image_tensor, lambda_init=0.3, verbose=True):
         """Clean, content-adaptive initialization based strictly on image gradients."""
-        print(f"Initializing {self.num_gaussians} anisotropic Gaussians adaptively...")
+        if verbose:
+            print(f"Initializing {self.num_gaussians} Gaussians adaptively...")
         device = self.mus.device
 
         # 1. Compute gradients for structure and orientation
@@ -312,30 +312,36 @@ class GaussianRepresentationND(nn.Module):
 
 
 # --- Data Loading Utility ---
-def load_medmnist(dataset_flag="bloodmnist", download=True, size=224, idx=0):
+def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=True, size=224):
+    """Load a full MedMNIST dataset for a given split.
+
+    Returns the dataset object, the INFO metadata dict, and the spatial dimension D.
+    """
+    import medmnist as medmnist_module
     info = INFO[dataset_flag]
-    # DataClass = getattr(medmnist, info['python_class'])
-    # dataset = DataClass(split='test', download=download, size=size)
-    from medmnist import PneumoniaMNIST
+    DataClass = getattr(medmnist_module, info['python_class'])
+    dataset = DataClass(split=split, download=download, size=size)
+    D = 3 if "3d" in dataset_flag.lower() else 2
+    return dataset, info, D
 
-    dataset = PneumoniaMNIST(split="test",
-                                   download=True,
-                                   size=size)
-    # Get first sample
-    img, _ = dataset[idx]
-    img_np = np.array(img)
 
-    # Normalize and format
+def preprocess_medmnist_image(img_pil, D):
+    """Convert a MedMNIST PIL image to a normalized float32 tensor."""
+    img_np = np.array(img_pil)
     if len(img_np.shape) == 3 and img_np.shape[-1] == 3:
-        # Convert RGB to Grayscale for simplicity in this demo
         img_np = np.mean(img_np, axis=-1)
     if img_np.shape[0] == 1:
         img_np = img_np[0]
-
     img_tensor = torch.tensor(img_np, dtype=torch.float32)
     img_tensor = (img_tensor - img_tensor.min()) / (img_tensor.max() - img_tensor.min())
+    return img_tensor
 
-    D = len(img_tensor.shape)
+
+def load_medmnist(dataset_flag="bloodmnist", download=True, size=224, idx=0):
+    """Load a single MedMNIST bloodmnist image"""
+    dataset, info, D = load_medmnist_dataset(dataset_flag, split="test", download=download, size=size)
+    img, _ = dataset[idx]
+    img_tensor = preprocess_medmnist_image(img, D)
     return img_tensor, D
 
 
@@ -375,29 +381,35 @@ def compute_regularization_losses(gs_model: GaussianRepresentationND,
 
 
 # --- Training Loop ---
-def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tensor,
-             params: TrainingConfig):
+def train_gs(gs: GaussianRepresentationND, img_tensor: torch.Tensor,
+             params: TrainingConfig, logging_dir: Optional[Path] = None):
+    if logging_dir is not None:
+        logging_dir.mkdir(parents=True, exist_ok=True)
     shape_tensor = torch.tensor(img_tensor.shape, device=img_tensor.device)
 
     # 1. Create coordinate grid
+    D = gs.D
+    device = img_tensor.device
     grid_axes = [torch.arange(s, device=device) for s in img_tensor.shape]
     coords_voxel_ = torch.stack(torch.meshgrid(*grid_axes, indexing='ij'), dim=-1).view(-1, D).float()
     values_ = img_tensor.flatten()
     total_coords = coords_voxel_.shape[0]
     batch_size = int(total_coords * params.point_sample_prop)
-    print(batch_size)
 
     # 2. Initialize Optimizers
     optimizer = torch.optim.Adam(gs.parameters(), lr=params.learning_rate_start)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=params.max_epochs, eta_min=params.learning_rate_end)
     loss_fn = torch.nn.L1Loss()
 
-    # 3. FAISS Setup (GPU)
-    res = faiss.StandardGpuResources()
+    # 3. FAISS Setup (GPU if available, else CPU)
     cpu_index = faiss.IndexFlatL2(D)
-    gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
-    gpu_index.add(gs.mus.detach())
-    _, top_k_idcs = gpu_index.search(coords_voxel_, params.k_neighborhood)
+    if hasattr(faiss, 'StandardGpuResources'):
+        res = faiss.StandardGpuResources()
+        faiss_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+    else:
+        faiss_index = cpu_index
+    faiss_index.add(gs.mus.detach())
+    _, top_k_idcs = faiss_index.search(coords_voxel_, params.k_neighborhood)
 
     t0 = time.time()
     progress_ims = []
@@ -405,7 +417,7 @@ def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tens
     progress_ims_psnrs = []
     loss, loss_rec, loss_scale, loss_pos = [torch.tensor([torch.inf])]*4
     for epoch in range(params.max_epochs):
-        if params.logging:
+        if logging_dir is not None:
             if epoch % 100 == 0:
                 # Progress print
                 pred = gs.forward(coords_voxel_, top_k_idcs).reshape(img_tensor.shape)
@@ -429,7 +441,7 @@ def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tens
                         image_tensor=pred.detach(),
                         subset_ratio=params.logging_gauss_vis_prop,
                         num_std=1.5,  # Distance in number of standard devs to draw ellipses
-                        run_dir=run_dir,
+                        run_dir=logging_dir,
                         file_name=f'ellipses_{epoch}.png',
                     )
 
@@ -455,38 +467,40 @@ def train_gs(run_dir: Path, gs: GaussianRepresentationND, img_tensor: torch.Tens
 
         # Update FAISS Index periodically to track moving Gaussians
         if (epoch + 1) % params.knn_update_rate == 0:
-            gpu_index.reset()
-            gpu_index.add(gs.mus.detach())
-            _, top_k_idcs = gpu_index.search(coords_voxel_, params.k_neighborhood)
-    # Save parameters
-    print(f"Training complete. Save path: {run_dir / 'representation.pt'}")
-    torch.save(gs.state_dict(), run_dir / 'representation.pt')
-    epoch = params.max_epochs
+            faiss_index.reset()
+            faiss_index.add(gs.mus.detach())
+            _, top_k_idcs = faiss_index.search(coords_voxel_, params.k_neighborhood)
+    # Post-training: always compute final PSNR
     pred = gs.forward(coords_voxel_, top_k_idcs).reshape(img_tensor.shape)
-    progress_ims_epochs.append(epoch)
-    psnr = kornia.metrics.psnr(img_tensor[None], pred[None], max_val=gs.img_max)
-    progress_ims_psnrs.append(psnr.item())
+    psnr = kornia.metrics.psnr(img_tensor[None], pred[None], max_val=gs.img_max).item()
 
-    print(f"Epoch {epoch:04d} | Time: {time.time() - t0:.2f}s | LR: {optimizer.param_groups[0]['lr']:.2e} | "
-          f"PSNR: {psnr.item()} | Loss: {loss.item():.4f} | Loss recon: {loss_rec.item():.4f} | "
-          f"Loss scale: {loss_scale.item():.4f} | Loss pos: {loss_pos.item():.4f}")
-    if params.logging:
+    # Logging and saving
+    if logging_dir is not None:
+        print(f"Training complete. Save path: {logging_dir / 'representation.pt'}")
+        torch.save(gs.state_dict(), logging_dir / 'representation.pt')
+        epoch = params.max_epochs
+        progress_ims_epochs.append(epoch)
+        progress_ims_psnrs.append(psnr)
+
+        print(f"Epoch {epoch:04d} | Time: {time.time() - t0:.2f}s | LR: {optimizer.param_groups[0]['lr']:.2e} | "
+              f"PSNR: {psnr} | Loss: {loss.item():.4f} | Loss recon: {loss_rec.item():.4f} | "
+              f"Loss scale: {loss_scale.item():.4f} | Loss pos: {loss_pos.item():.4f}")
         gt = img_tensor
         if gs.D == 3:
             pred = pred[..., ::4].reshape(pred.shape[-3], pred.shape[-2], 4, 4).permute(2, 0, 3, 1).reshape(4*pred.shape[-3], 4*pred.shape[-2])
             gt = gt[..., ::4].reshape(gt.shape[-3], gt.shape[-2], 4, 4).permute(2, 0, 3, 1).reshape(4*gt.shape[-3], 4*gt.shape[-2])
         progress_ims.append(pred.detach().cpu())
-        save_progress_figure(progress_ims, gt, progress_ims_epochs, progress_ims_psnrs, run_dir / "progress.png")
+        save_progress_figure(progress_ims, gt, progress_ims_epochs, progress_ims_psnrs, logging_dir / "progress.png")
         if gs.D == 2:
             visualize_2d_gaussians(
                 gs_model=gs,
                 image_tensor=pred.detach(),
                 subset_ratio=params.logging_gauss_vis_prop,
                 num_std=1.5,  # Distance in number of standard devs to draw ellipses
-                run_dir=run_dir,
+                run_dir=logging_dir,
                 file_name=f'ellipses_{epoch}.png',
             )
-    return gs, pred, coords_voxel_, top_k_idcs
+    return gs, pred, coords_voxel_, top_k_idcs, psnr
 
 
 if __name__ == '__main__':
@@ -509,10 +523,9 @@ if __name__ == '__main__':
     # ----- Init Model
     gs = GaussianRepresentationND(num_gaussians, img.shape).to(device)
     gs.initialize_from_image(img)
-    logging_dir = 'logging'
     run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")[:-3]
     run_id += f"_{D}D"
-    run_dir = Path(logging_dir) / run_id
+    run_dir = Path('logging') / run_id
     run_dir.mkdir(exist_ok=True, parents=True)
     print('Run name:', run_dir)
     print(f"Image shape: {img.shape}, num pixels: {np.prod(img.shape)}, "
@@ -520,4 +533,4 @@ if __name__ == '__main__':
           f"num neighbors: {params.k_neighborhood}")
 
     # ---- Optimize Representation
-    gs, pred_image, coords_, final_idcs = train_gs(run_dir, gs, img, params)
+    gs, pred_image, coords_, final_idcs, _ = train_gs(gs, img, params, logging_dir=run_dir)
