@@ -1,49 +1,86 @@
 from pathlib import Path
+from typing import Callable, Literal
 
 import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
+from dataset.transforms import pos_normalization
+
 
 class Gaussian2DDataset(Dataset):
     """A torch dataset that loads our gaussian representations and ground truth."""
 
-    root: Path | str
-    """The root directory of the dataset. Is a Path or a string, whatever fits you.
-    -> update the type accordingly
-    """
+    root: Path
+    """The root directory of the dataset"""
+
+    transforms: Callable[[Data], Data] | None
+    """The transformations to apply to the data."""
+
+    in_memory: bool
+    """Whether to keep the dataset in memory."""
+
+    img_size: int = 224
+    """The size of the images to load."""
 
     files: list[Path] | list[str]
-    """The actual files/directories. Probably one per ground truth image, but this depends on the work of Dominik."""
+    """The actual files."""
 
-    def __init__(self, root: Path | str) -> None:
-        """Initializes the dataset, namely precomputes the attributes above.
-        Depending on the size of the dataset, some in memory handling would be nice to have.
+    data: list[Data]
+    """The in memory data."""
+
+    def __init__(
+        self,
+        root: Path | str,
+        split: Literal["train", "val", "test"],
+        *,
+        transforms: Callable[[Data], Data] | None = None,
+        in_memory: bool = False,
+        img_size: int = 224,
+    ) -> None:
+        """Initializes the dataset.
 
         Args:
             root (Path | str): The root directory of the dataset, from which the files are read and are already located.
+            split: Which data split to load.
+
+        Keyword Args:
+            transforms: The transformations to apply to the data. Applied after built-in -1..1 pos range normalization.
+                Should use torch_geometric.transforms
+            in_memory (bool): Whether to keep the dataset in memory.
+            img_size (int): The size of the images to load.
         """
-        pass
+
+        self.root = Path(root) / split
+        self.transforms = transforms
+        self.in_memory = in_memory
+        self.img_size = img_size
+
+        if not self.root.is_dir():
+            raise NotADirectoryError(f"{self.root} is not a directory")
+
+        self.files = sorted(list(self.root.rglob("*.pt")))
+
+        if len(self.files) == 0:
+            raise FileNotFoundError(f"Split {split} is empty")
+
+        if self.in_memory:
+            self.data = []
+
+            for f in self.files:
+                d = torch.load(f, weights_only=False, map_location="cpu")  # better to first load to RAM not VRAM
+                self.data.append(d)
 
     def __len__(self) -> int:
         """Gives the length of the dataset.
 
-        Should be either the number of different ground truth files (-> disrespecting the X alternative gaussian
-        representations per file) or the total number of representations (-> #ground truth files * #runs per file).
-
         Returns:
             The length of the dataset.
         """
-        return 0
+        return len(self.files)
 
     def __getitem__(self, idx: int) -> Data:
         """Gives the data for a given selected example.
-
-        This depends on the same decision that has to be made for __len__:
-            - either one (random?) selected representation of that ground truth file
-            - or the index refers to a specific representation.
-
-        The returned Data object is not modified inplace according to my short and not extensive research.
 
         Args:
             idx (int): The index of the data.
@@ -56,16 +93,16 @@ class Gaussian2DDataset(Dataset):
             - https://pytorch-geometric.readthedocs.io/en/stable/generated/torch_geometric.nn.pool.knn_graph.html
             - https://pytorch-geometric.readthedocs.io/en/stable/generated/torch_geometric.nn.pool.radius_graph.html
         """
-        return Data(
-            x=torch.empty(0),
-            edge_index=torch.empty(0),
-            edge_attr=torch.empty(
-                0
-            ),  # TODO: decide whether we actually want to use edge embeddings (like [x1 - x2, y1 - y2,
-            # <other info...>])
-            y=torch.empty(0),
-            pos=torch.empty(
-                0
-            ),  # TODO: decide whether we want to use this, may be useful to determine the neighbors with other
-            # metrics (see References),
-        )
+        d: Data
+
+        if self.in_memory:
+            d = self.data[idx].clone()
+        else:
+            d = torch.load(self.files[idx], weights_only=False, map_location="cpu")
+
+        d = pos_normalization(d, self.img_size)  # explicit normalization outside the transforms (!)
+
+        if self.transforms is not None:
+            d = self.transforms(d)
+
+        return d
