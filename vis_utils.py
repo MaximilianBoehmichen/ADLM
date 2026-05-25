@@ -137,7 +137,7 @@ def visualize_2d_gaussians(gs_model, image_tensor, subset_ratio=0.35, num_std=1.
         )
         ax.add_patch(ellipse)
 
-    ax.set_title(f"Gaussian Splatting: {num_to_draw} / {K} Gaussians ({num_std}$\sigma$ surface)")
+    ax.set_title(f"Gaussian Splatting: {num_to_draw} / {K} Gaussians ({num_std}$\\sigma$ surface)")
     ax.set_xlim(0, W - 1)
     ax.set_ylim(H - 1, 0)  # Invert Y axis to match image coordinates
     plt.axis('off')

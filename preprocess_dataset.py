@@ -6,6 +6,7 @@ Usage:
 
 import argparse
 import os
+import random
 import sys
 from pathlib import Path
 import faiss
@@ -48,21 +49,21 @@ def extract_pyg_data(gs: GaussianRepresentationND, y: torch.Tensor, k_graph: int
         scalings = gs.scalings.detach().cpu()
         rotations = gs.rotations.detach().cpu()
         colors_mapped = (
-            torch.sigmoid(gs.colors) * (gs.img_max - gs.img_min) + gs.img_min
+                torch.sigmoid(gs.colors) * (gs.img_max - gs.img_min) + gs.img_min
         ).detach().cpu()
 
     x = torch.cat([mus, scalings, rotations, colors_mapped.unsqueeze(-1)], dim=-1)
 
     # KNN graph
     num_nodes = mus.shape[0]
-    index = faiss.IndexFlatL2(mus.shape[1]) # L2 distance
+    index = faiss.IndexFlatL2(mus.shape[1])  # L2 distance
     index.add(mus.numpy().astype(np.float32))
     # k+1 because the nearest neighbor of each point is itself
     _, knn_indices = index.search(mus.numpy().astype(np.float32), k_graph + 1)
     # Remove self-loops (first column) and build COO edge_index
     knn_indices = knn_indices[:, 1:]  # (N, k_graph)
-    src = np.repeat(np.arange(num_nodes), k_graph) # [0,0,0, 1,1,1, 2,2,2, ...]
-    dst = knn_indices.flatten() # [n1,n2,n3, n4,n5,n6, ...]
+    src = np.repeat(np.arange(num_nodes), k_graph)  # [0,0,0, 1,1,1, 2,2,2, ...]
+    dst = knn_indices.flatten()  # [n1,n2,n3, n4,n5,n6, ...]
     edge_index = torch.tensor(np.stack([src, dst]), dtype=torch.long)
 
     data = Data(
@@ -76,43 +77,62 @@ def extract_pyg_data(gs: GaussianRepresentationND, y: torch.Tensor, k_graph: int
     return data
 
 
-def process_split(dataset_flag: str, split: str, output_dir: Path,
-                  k_graph: int, params: TrainingConfig, device: torch.device,
-                  logging_dir: Path = None,
-                  start_idx: int = 0, end_idx: int = None):
+def process_split(
+    dataset_flag: str,
+    split: str,
+    output_dir: Path,
+    k_graph: int,
+    params: TrainingConfig,
+    device: torch.device,
+    logging_dir: Path = None,
+    start_idx: int = 0,
+    end_idx: int = None,
+    sample_count: int = 100,
+    reps: int = 100,
+):
     """Process all images in one MedMNIST split."""
     dataset, info, D = load_medmnist_dataset(dataset_flag, split=split)
     assert D == 2, "Only 2D datasets are supported for now."
     task = info["task"]
 
-    split_dir = output_dir / dataset_flag / split
+    split_dir = output_dir / f"{dataset_flag}EDA" / split
     split_dir.mkdir(parents=True, exist_ok=True)
 
     params_per_gauss = 2 + 2 + 1 + 1  # mus(2) + scalings(2) + rotation(1) + color(1)
+
+    rng = random.Random(848577)
     total = len(dataset)
+
+    samples = rng.sample(range(total), k=sample_count)
+
     start = max(0, start_idx)
-    end = total if end_idx is None else min(total, end_idx)
+    end = sample_count if end_idx is None else min(sample_count, end_idx)
 
-    for i in range(start, end):
-        out_path = split_dir / f"{i:05d}.pt"
-        if out_path.exists():
-            continue
+    for i in samples[start:end]:
+        out_dir = split_dir / f"{i:05d}"
+        out_dir.mkdir(exist_ok=True, parents=False)
 
-        img_pil, label_np = dataset[i]
-        y = build_label_tensor(label_np, task)
-        img_tensor = preprocess_medmnist_image(img_pil, D).to(device)
+        for j in range(reps):
+            out_path = out_dir / f"{j:05d}.pt"
 
-        num_gaussians = int(np.prod(img_tensor.shape) * params.compression_factor / params_per_gauss)
+            if out_path.exists():
+                continue
 
-        gs = GaussianRepresentationND(num_gaussians, img_tensor.shape).to(device)
-        gs.initialize_from_image(img_tensor, verbose=False)
+            img_pil, label_np = dataset[i]
+            y = build_label_tensor(label_np, task)
+            img_tensor = preprocess_medmnist_image(img_pil, D).to(device)
 
-        img_logging_dir = logging_dir / f"{i:05d}" if logging_dir else None
-        gs, _, _, _, psnr = train_gs(gs, img_tensor, params, logging_dir=img_logging_dir)
-        data = extract_pyg_data(gs, y, k_graph, psnr=psnr)
-        torch.save(data, out_path)
+            num_gaussians = int(np.prod(img_tensor.shape) * params.compression_factor / params_per_gauss)
 
-        print(f"[{split}] {i + 1}/{total} (range {start}:{end}) | PSNR: {psnr:.1f} dB | {out_path}")
+            gs = GaussianRepresentationND(num_gaussians, img_tensor.shape).to(device)
+            gs.initialize_from_image(img_tensor, verbose=False)
+
+            img_logging_dir = logging_dir / f"{i:05d}" if logging_dir else None
+            gs, _, _, _, psnr = train_gs(gs, img_tensor, params, logging_dir=img_logging_dir)
+            data = extract_pyg_data(gs, y, k_graph, psnr=psnr)
+            torch.save(data, out_path)
+
+            print(f"[{split}] {i}/{j}: | PSNR: {psnr:.1f} dB | {out_path}")
 
 
 def main():
@@ -129,6 +149,10 @@ def main():
                         help="First image index to process (inclusive). Use with --end-idx to shard across jobs.")
     parser.add_argument("--end-idx", type=int, default=None,
                         help="Last image index to process (exclusive). Defaults to end of split.")
+
+    parser.add_argument("--samples", type=int, default=100)
+    parser.add_argument("--reps", type=int, default=200)
+
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,7 +171,7 @@ def main():
         if split_logging_dir:
             split_logging_dir.mkdir(parents=True, exist_ok=True)
         process_split(args.dataset, split, output_dir, args.k_graph, params, device, split_logging_dir,
-                      start_idx=args.start_idx, end_idx=args.end_idx)
+                      start_idx=args.start_idx, end_idx=args.end_idx, sample_count=args.samples, reps=args.reps)
 
     print("\nDone.")
 
