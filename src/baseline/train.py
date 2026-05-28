@@ -9,15 +9,18 @@ Features:
 - Per-epoch evaluation on the ``val`` split, early stopping on the overall
   AUC, final evaluation on the ``test`` split once on the best checkpoint.
 - TensorBoard logs and a ``history.json`` snapshot for offline plotting.
+- Optional Weights & Biases mirroring of every scalar plus per-epoch
+  GPU/CPU resource metrics.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -29,6 +32,7 @@ from baseline.device import resolve_device
 from baseline.metrics import EvalMetrics, compute_metrics
 from baseline.models.base import CheckpointMetrics
 from baseline.plotting import plot_history
+
 
 if TYPE_CHECKING:
     from torch.utils.data import DataLoader
@@ -74,6 +78,82 @@ WEIGHT_DECAY = 1e-4
 
 def _build_optimizer(params, lr: float) -> torch.optim.Optimizer:
     return torch.optim.AdamW(params, lr=lr, weight_decay=WEIGHT_DECAY)
+
+
+class _WandbLogger:
+    """Thin wrapper around wandb, no-op when disabled or import fails."""
+
+    def __init__(self, config: Config, hparams: dict[str, Any]) -> None:
+        self._run = None
+        if not config.wandb:
+            return
+        try:
+            import wandb
+        except ImportError:
+            print("wandb not installed; skipping W&B logging.")
+            return
+        self._wandb = wandb
+        wandb_dir = config.output_dir / "wandb"
+        wandb_dir.mkdir(parents=True, exist_ok=True)
+        slurm_meta = {
+            key: os.environ[key]
+            for key in (
+                "SLURM_JOB_ID",
+                "SLURM_JOB_NAME",
+                "SLURM_NODELIST",
+                "SLURMD_NODENAME",
+                "SLURM_GPUS_ON_NODE",
+                "SLURM_ARRAY_JOB_ID",
+                "SLURM_ARRAY_TASK_ID",
+            )
+            if key in os.environ
+        }
+        self._run = wandb.init(
+            project=config.wandb_project,
+            entity=config.wandb_entity,
+            name=config.run_name,
+            group=config.wandb_group,
+            tags=list(config.wandb_tags) or None,
+            config={**hparams, **slurm_meta},
+            dir=str(wandb_dir),
+            save_code=True,
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return self._run is not None
+
+    def log(self, payload: dict[str, float], step: int | None = None) -> None:
+        if self._run is None:
+            return
+        if step is None:
+            self._wandb.log(payload)
+        else:
+            self._wandb.log(payload, step=step)
+
+    def summary_update(self, payload: dict[str, Any]) -> None:
+        if self._run is None:
+            return
+        self._wandb.summary.update(payload)
+
+    def finish(self) -> None:
+        if self._run is None:
+            return
+        self._wandb.finish()
+
+
+def _gpu_metrics(device: torch.device) -> dict[str, float]:
+    """Return per-epoch CUDA memory metrics; empty on CPU."""
+    if device.type != "cuda":
+        return {}
+    idx = device.index if device.index is not None else torch.cuda.current_device()
+    peak = torch.cuda.max_memory_allocated(idx) / (1024 ** 3)
+    reserved = torch.cuda.memory_reserved(idx) / (1024 ** 3)
+    torch.cuda.reset_peak_memory_stats(idx)
+    return {
+        "resources/gpu_peak_mem_gib": peak,
+        "resources/gpu_reserved_mem_gib": reserved,
+    }
 
 
 def _build_criterion(is_multilabel: bool) -> nn.Module:
@@ -146,30 +226,27 @@ def _evaluate(
 
 def _log_eval(
     writer: SummaryWriter,
+    wandb_logger: _WandbLogger,
     metrics: EvalMetrics,
     epoch: float,
     class_names: tuple[str, ...],
     split: str,
 ) -> None:
-    """Write a full set of evaluation metrics to TensorBoard.
-
-    Args:
-        writer: TensorBoard summary writer.
-        metrics: The metrics returned by :func:`_evaluate`.
-        epoch: Fractional epoch used as the x-coordinate.
-        class_names: Class labels used to tag per-class scalars.
-        split: Split name appended to the TensorBoard tag (e.g.
-            ``"val"`` or ``"test"``).
-    """
+    """Write a full set of evaluation metrics to TensorBoard and W&B."""
     step = _to_step(epoch)
-    writer.add_scalar(f"loss/{split}", metrics.loss, step)
-    writer.add_scalar(f"acc/overall/{split}", metrics.accuracy, step)
-    writer.add_scalar(f"auc/overall/{split}", metrics.auc, step)
+    payload: dict[str, float] = {
+        f"loss/{split}": metrics.loss,
+        f"acc/overall/{split}": metrics.accuracy,
+        f"auc/overall/{split}": metrics.auc,
+    }
     for name, value in zip(class_names, metrics.per_class_accuracy, strict=True):
-        writer.add_scalar(f"acc/class_{name}/{split}", value, step)
+        payload[f"acc/class_{name}/{split}"] = float(value)
     for name, value in zip(class_names, metrics.per_class_auc, strict=True):
         if not np.isnan(value):
-            writer.add_scalar(f"auc/class_{name}/{split}", value, step)
+            payload[f"auc/class_{name}/{split}"] = float(value)
+    for tag, value in payload.items():
+        writer.add_scalar(tag, value, step)
+    wandb_logger.log({**payload, "epoch": epoch}, step=step)
 
 
 def _save_checkpoint(
@@ -232,6 +309,24 @@ def train(
     history = History()
     config.model_dir.mkdir(parents=True, exist_ok=True)
 
+    hparams = {
+        "model": config.model,
+        "dataset": config.dataset,
+        "lr": config.lr,
+        "weight_decay": WEIGHT_DECAY,
+        "batch_size": config.batch_size,
+        "accum_batch_size": config.accum_batch_size,
+        "finetune": int(config.finetune),
+        "freeze_epochs": config.freeze_epochs,
+        "rotation": config.rotation_degrees,
+        "jitter": config.jitter,
+        "image_size": config.image_size,
+        "epochs": config.epochs,
+        "seed": config.seed,
+        "device": str(device),
+    }
+    wandb_logger = _WandbLogger(config, hparams)
+
     steps_per_epoch = len(loaders.train)
     optimizer_steps_per_epoch = max(1, steps_per_epoch // config.accumulation_steps)
 
@@ -247,102 +342,140 @@ def train(
     epochs_without_improvement = 0
     last_epoch_run = 0
     training_start = time.monotonic()
-
-    for epoch in range(1, config.epochs + 1):
-        if config.finetune and epoch == config.freeze_epochs + 1:
-            model.unfreeze_backbone()
-            optimizer = _build_optimizer(model.trainable_parameters(), config.lr)
-
-        model.train()
-        optimizer.zero_grad()
-        running_loss = 0.0
-        microbatch_in_step = 0
-        optimizer_step_in_epoch = 0
-
-        pbar = tqdm(
-            loaders.train,
-            desc=f"epoch {epoch}/{config.epochs}",
-            leave=False,
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(
+            device.index if device.index is not None else torch.cuda.current_device(),
         )
-        for batch_idx, (images, labels) in enumerate(pbar):
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
-            logits = model(images)
-            loss = criterion(logits, labels)
-            (loss / config.accumulation_steps).backward()
-            running_loss += loss.item()
-            microbatch_in_step += 1
 
-            if microbatch_in_step == config.accumulation_steps:
+    try:
+        for epoch in range(1, config.epochs + 1):
+            if config.finetune and epoch == config.freeze_epochs + 1:
+                model.unfreeze_backbone()
+                optimizer = _build_optimizer(model.trainable_parameters(), config.lr)
+
+            model.train()
+            optimizer.zero_grad()
+            running_loss = 0.0
+            microbatch_in_step = 0
+            optimizer_step_in_epoch = 0
+            epoch_start = time.monotonic()
+            samples_this_epoch = 0
+
+            pbar = tqdm(
+                loaders.train,
+                desc=f"epoch {epoch}/{config.epochs}",
+                leave=False,
+            )
+            for batch_idx, (images, labels) in enumerate(pbar):
+                images = images.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
+                logits = model(images)
+                loss = criterion(logits, labels)
+                (loss / config.accumulation_steps).backward()
+                running_loss += loss.item()
+                microbatch_in_step += 1
+                samples_this_epoch += images.size(0)
+
+                if microbatch_in_step == config.accumulation_steps:
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
+                    step_loss = running_loss / microbatch_in_step
+                    optimizer_step_in_epoch += 1
+                    frac_epoch = (
+                        epoch
+                        - 1
+                        + optimizer_step_in_epoch / optimizer_steps_per_epoch
+                    )
+                    step = _to_step(frac_epoch)
+                    writer.add_scalar("loss/train", step_loss, step)
+                    wandb_logger.log(
+                        {"loss/train": step_loss, "epoch": frac_epoch},
+                        step=step,
+                    )
+                    history.train_loss.append((frac_epoch, step_loss))
+                    pbar.set_postfix(loss=f"{step_loss:.4f}")
+                    running_loss = 0.0
+                    microbatch_in_step = 0
+
+            # Flush a trailing partial accumulation, if any.
+            if microbatch_in_step > 0:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
                 step_loss = running_loss / microbatch_in_step
                 optimizer_step_in_epoch += 1
-                frac_epoch = (
-                    epoch
-                    - 1
-                    + optimizer_step_in_epoch / optimizer_steps_per_epoch
+                frac_epoch = float(epoch)
+                step = _to_step(frac_epoch)
+                writer.add_scalar("loss/train", step_loss, step)
+                wandb_logger.log(
+                    {"loss/train": step_loss, "epoch": frac_epoch},
+                    step=step,
                 )
-                writer.add_scalar("loss/train", step_loss, _to_step(frac_epoch))
                 history.train_loss.append((frac_epoch, step_loss))
-                pbar.set_postfix(loss=f"{step_loss:.4f}")
-                running_loss = 0.0
-                microbatch_in_step = 0
 
-        # Flush a trailing partial accumulation, if any.
-        if microbatch_in_step > 0:
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
-            step_loss = running_loss / microbatch_in_step
-            optimizer_step_in_epoch += 1
-            frac_epoch = float(epoch)
-            writer.add_scalar("loss/train", step_loss, _to_step(frac_epoch))
-            history.train_loss.append((frac_epoch, step_loss))
-
-        val_metrics = _evaluate(
-            model,
-            loaders.val,
-            criterion,
-            device,
-            dataset_info.is_multilabel,
-            desc=f"val {epoch}",
-        )
-        _log_eval(writer, val_metrics, float(epoch), dataset_info.class_names, "val")
-        history.val_loss.append((float(epoch), val_metrics.loss))
-        history.val_accuracy.append((float(epoch), val_metrics.accuracy))
-        history.val_auc.append((float(epoch), val_metrics.auc))
-        history.val_per_class_accuracy.append((float(epoch), val_metrics.per_class_accuracy))
-        history.val_per_class_auc.append((float(epoch), val_metrics.per_class_auc))
-
-        print(
-            f"[epoch {epoch}] val loss={val_metrics.loss:.4f} "
-            f"acc={val_metrics.accuracy:.4f} auc={val_metrics.auc:.4f}",
-        )
-
-        last_epoch_run = epoch
-
-        if val_metrics.auc > best_auc:
-            best_auc = val_metrics.auc
-            best_epoch = epoch
-            best_path = _save_checkpoint(
+            val_metrics = _evaluate(
                 model,
-                config,
-                epoch,
-                val_metrics,
-                training_time_seconds=time.monotonic() - training_start,
-                device=device,
+                loaders.val,
+                criterion,
+                device,
+                dataset_info.is_multilabel,
+                desc=f"val {epoch}",
             )
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
-            if epochs_without_improvement >= config.patience:
-                print(f"Early stopping at epoch {epoch} (no AUC improvement for {config.patience} epochs).")
-                break
+            _log_eval(
+                writer, wandb_logger, val_metrics,
+                float(epoch), dataset_info.class_names, "val",
+            )
+            history.val_loss.append((float(epoch), val_metrics.loss))
+            history.val_accuracy.append((float(epoch), val_metrics.accuracy))
+            history.val_auc.append((float(epoch), val_metrics.auc))
+            history.val_per_class_accuracy.append((float(epoch), val_metrics.per_class_accuracy))
+            history.val_per_class_auc.append((float(epoch), val_metrics.per_class_auc))
 
-        history.dump(config.model_dir / "history.json")
+            epoch_seconds = time.monotonic() - epoch_start
+            resource_payload: dict[str, float] = {
+                "resources/epoch_seconds": epoch_seconds,
+                "resources/samples_per_second": (
+                    samples_this_epoch / epoch_seconds if epoch_seconds > 0 else 0.0
+                ),
+                **_gpu_metrics(device),
+            }
+            step = _to_step(float(epoch))
+            for tag, value in resource_payload.items():
+                writer.add_scalar(tag, value, step)
+            wandb_logger.log({**resource_payload, "epoch": float(epoch)}, step=step)
 
-    if best_path is None:
-        raise RuntimeError("Training finished without ever improving val AUC.")
+            print(
+                f"[epoch {epoch}] val loss={val_metrics.loss:.4f} "
+                f"acc={val_metrics.accuracy:.4f} auc={val_metrics.auc:.4f}",
+            )
+
+            last_epoch_run = epoch
+
+            if val_metrics.auc > best_auc:
+                best_auc = val_metrics.auc
+                best_epoch = epoch
+                best_path = _save_checkpoint(
+                    model,
+                    config,
+                    epoch,
+                    val_metrics,
+                    training_time_seconds=time.monotonic() - training_start,
+                    device=device,
+                )
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+                if epochs_without_improvement >= config.patience:
+                    print(f"Early stopping at epoch {epoch} (no AUC improvement for {config.patience} epochs).")
+                    break
+
+            history.dump(config.model_dir / "history.json")
+
+        if best_path is None:
+            raise RuntimeError("Training finished without ever improving val AUC.")
+    except BaseException:
+        wandb_logger.finish()
+        writer.close()
+        raise
 
     best_model, best_ckpt = type(model).load(best_path, map_location=device)
     best_model.to(device)
@@ -353,6 +486,10 @@ def train(
         device,
         dataset_info.is_multilabel,
         desc="test",
+    )
+    _log_eval(
+        writer, wandb_logger, test_metrics,
+        float(best_epoch), dataset_info.class_names, "test",
     )
     history.test = {
         "loss": test_metrics.loss,
@@ -382,32 +519,18 @@ def train(
     best_model.save(final_path, final_ckpt)
 
     total_train_seconds = time.monotonic() - training_start
-    writer.add_hparams(
-        {
-            "model": config.model,
-            "lr": config.lr,
-            "weight_decay": WEIGHT_DECAY,
-            "batch_size": config.batch_size,
-            "accum_batch_size": config.accum_batch_size,
-            "finetune": int(config.finetune),
-            "freeze_epochs": config.freeze_epochs,
-            "rotation": config.rotation_degrees,
-            "jitter": config.jitter,
-            "image_size": config.image_size,
-            "epochs": config.epochs,
-            "epochs_run": last_epoch_run,
-            "seed": config.seed,
-            "device": str(device),
-        },
-        {
-            "hparam/test_auc": test_metrics.auc,
-            "hparam/test_accuracy": test_metrics.accuracy,
-            "hparam/best_val_auc": best_auc,
-            "hparam/best_epoch": best_epoch,
-            "hparam/train_time_seconds": total_train_seconds,
-        },
-    )
+    summary = {
+        "hparam/test_auc": test_metrics.auc,
+        "hparam/test_accuracy": test_metrics.accuracy,
+        "hparam/best_val_auc": best_auc,
+        "hparam/best_epoch": best_epoch,
+        "hparam/train_time_seconds": total_train_seconds,
+        "resources/epochs_run": last_epoch_run,
+    }
+    writer.add_hparams({**hparams, "epochs_run": last_epoch_run}, summary)
     writer.close()
+    wandb_logger.summary_update(summary)
+    wandb_logger.finish()
 
     print(
         f"Training complete. Best epoch {best_epoch}, val AUC={best_auc:.4f}, "

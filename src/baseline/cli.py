@@ -57,6 +57,13 @@ class Config:
         device: String identifier of the resolved device. Populated by
             :func:`baseline.main.main` after the CLI has been parsed; the
             empty string means "not yet resolved".
+        wandb: If ``True``, mirror every TensorBoard scalar to Weights &
+            Biases and log GPU/CPU resource metrics.
+        wandb_project: W&B project name. Ignored unless ``wandb`` is set.
+        wandb_entity: W&B entity (team or user). ``None`` falls back to
+            the wandb default.
+        wandb_group: Optional W&B run group, useful for SLURM sweeps.
+        wandb_tags: Optional list of W&B tags for the run.
     """
 
     model: str
@@ -78,6 +85,11 @@ class Config:
         default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S"),
     )
     device: str = ""
+    wandb: bool = False
+    wandb_project: str = "adlm-baseline"
+    wandb_entity: str | None = None
+    wandb_group: str | None = None
+    wandb_tags: tuple[str, ...] = ()
 
     @property
     def accumulation_steps(self) -> int:
@@ -157,6 +169,33 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional override for the run name (default: current timestamp).",
     )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Mirror TensorBoard scalars to Weights & Biases and log resource usage.",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        default="ADLM-baseline",
+        help="W&B project name (used when --wandb is set).",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        default=None,
+        help="W&B entity (team/user). Defaults to the wandb-configured entity.",
+    )
+    parser.add_argument(
+        "--wandb-group",
+        default=None,
+        help="Optional W&B run group (e.g. to bundle SLURM array jobs).",
+    )
+    parser.add_argument(
+        "--wandb-tag",
+        action="append",
+        default=[],
+        dest="wandb_tags",
+        help="Optional W&B tag; repeat to add multiple.",
+    )
     return parser
 
 
@@ -190,4 +229,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
         output_dir=args.output_dir,
         seed=args.seed,
         run_name=run_name,
+        wandb=args.wandb,
+        wandb_project=args.wandb_project,
+        wandb_entity=args.wandb_entity,
+        wandb_group=args.wandb_group,
+        wandb_tags=tuple(args.wandb_tags),
     )
