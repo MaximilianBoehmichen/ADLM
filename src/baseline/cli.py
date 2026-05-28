@@ -57,8 +57,10 @@ class Config:
         device: String identifier of the resolved device. Populated by
             :func:`baseline.main.main` after the CLI has been parsed; the
             empty string means "not yet resolved".
-        wandb: If ``True``, mirror every TensorBoard scalar to Weights &
-            Biases and log GPU/CPU resource metrics.
+        wandb: Either ``False`` (disabled) or a positive integer ``N``
+            meaning "mirror TensorBoard scalars to Weights & Biases and
+            push ``loss/train`` once every ``N`` optimiser steps". Passing
+            ``--wandb`` without a value defaults to ``64``.
         wandb_project: W&B project name. Ignored unless ``wandb`` is set.
         wandb_entity: W&B entity (team or user). ``None`` falls back to
             the wandb default.
@@ -85,7 +87,7 @@ class Config:
         default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S"),
     )
     device: str = ""
-    wandb: bool = False
+    wandb: int | bool = False
     wandb_project: str = "adlm-baseline"
     wandb_entity: str | None = None
     wandb_group: str | None = None
@@ -171,8 +173,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--wandb",
-        action="store_true",
-        help="Mirror TensorBoard scalars to Weights & Biases and log resource usage.",
+        nargs="?",
+        type=int,
+        const=64,
+        default=False,
+        metavar="N",
+        help=(
+            "Enable W&B logging. Optionally pass a positive integer N to "
+            "throttle per-step loss logging to once every N optimiser "
+            "steps (default 64 when --wandb is given alone)."
+        ),
     )
     parser.add_argument(
         "--wandb-project",
