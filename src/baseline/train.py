@@ -4,10 +4,8 @@ Features:
 - Gradient accumulation with a fractional-epoch x-axis for TensorBoard, so
   runs with different ``accum_batch_size`` line up visually.
 - Two-phase fine-tuning: the backbone is frozen for the first
-  ``freeze_epochs`` epochs and unfrozen afterwards. The training strategy
-  (optimiser + LR schedule) is shared across both phases; the optimiser is
-  rebuilt at the unfreeze boundary while the LR schedule continues over the
-  global optimiser-step counter.
+  ``freeze_epochs`` epochs and unfrozen afterwards. The optimiser is rebuilt
+  at the unfreeze boundary.
 - Per-epoch evaluation on the ``val`` split, early stopping on the overall
   AUC, final evaluation on the ``test`` split once on the best checkpoint.
 - TensorBoard logs and a ``history.json`` snapshot for offline plotting.
@@ -16,9 +14,7 @@ Features:
 from __future__ import annotations
 
 import json
-import math
 import time
-from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -73,59 +69,11 @@ class History:
             json.dump(asdict(self), f, indent=2)
 
 
-@dataclass(slots=True, frozen=True)
-class Strategy:
-    """Optimiser + LR schedule bundle selected via ``--strategy``."""
-
-    name: str
-    optimizer_factory: Callable[[Iterable[nn.Parameter], float], torch.optim.Optimizer]
-    weight_decay: float
-    warmup_epochs: int
-    start_lr_ref: float
-    min_lr_ref: float
-
-    def lr_at_step(
-        self,
-        step: int,
-        warmup_steps: int,
-        total_steps: int,
-        lr: float,
-    ) -> float:
-        """Compute the LR for optimiser step index ``step`` (0-based)."""
-        peak = lr
-        start = self.start_lr_ref
-        end = self.min_lr_ref
-        if warmup_steps > 0 and step < warmup_steps:
-            return start + (peak - start) * (step / warmup_steps)
-        cosine_len = max(1, total_steps - warmup_steps)
-        progress = min(1.0, (step - warmup_steps) / cosine_len)
-        return end + 0.5 * (peak - end) * (1.0 + math.cos(math.pi * progress))
+WEIGHT_DECAY = 1e-4
 
 
-_STRATEGIES: dict[str, Strategy] = {
-    "strategy1": Strategy(
-        name="strategy1",
-        optimizer_factory=lambda params, lr: torch.optim.AdamW(
-            params, lr=lr, weight_decay=0.05,
-        ),
-        weight_decay=0.05,
-        warmup_epochs=10,
-        start_lr_ref=1e-6,
-        min_lr_ref=1e-5,
-    ),
-}
-
-
-def _get_strategy(name: str) -> Strategy:
-    try:
-        return _STRATEGIES[name]
-    except KeyError as err:
-        raise ValueError(f"Unknown training strategy {name!r}.") from err
-
-
-def _set_lr(optimizer: torch.optim.Optimizer, lr: float) -> None:
-    for group in optimizer.param_groups:
-        group["lr"] = lr
+def _build_optimizer(params, lr: float) -> torch.optim.Optimizer:
+    return torch.optim.AdamW(params, lr=lr, weight_decay=WEIGHT_DECAY)
 
 
 def _build_criterion(is_multilabel: bool) -> nn.Module:
@@ -284,25 +232,14 @@ def train(
     history = History()
     config.model_dir.mkdir(parents=True, exist_ok=True)
 
-    strategy = _get_strategy(config.strategy)
-
     steps_per_epoch = len(loaders.train)
     optimizer_steps_per_epoch = max(1, steps_per_epoch // config.accumulation_steps)
-    total_opt_steps = config.epochs * optimizer_steps_per_epoch
-    warmup_opt_steps = strategy.warmup_epochs * optimizer_steps_per_epoch
 
     if config.finetune:
         model.freeze_backbone()
     else:
         model.unfreeze_backbone()
-    optimizer = strategy.optimizer_factory(model.trainable_parameters(), config.lr)
-    global_opt_step = 0
-    _set_lr(
-        optimizer,
-        strategy.lr_at_step(
-            global_opt_step, warmup_opt_steps, total_opt_steps, config.lr,
-        ),
-    )
+    optimizer = _build_optimizer(model.trainable_parameters(), config.lr)
 
     best_auc = -float("inf")
     best_path: Path | None = None
@@ -314,13 +251,7 @@ def train(
     for epoch in range(1, config.epochs + 1):
         if config.finetune and epoch == config.freeze_epochs + 1:
             model.unfreeze_backbone()
-            optimizer = strategy.optimizer_factory(
-                model.trainable_parameters(),
-                strategy.lr_at_step(
-                    global_opt_step, warmup_opt_steps, total_opt_steps,
-                    config.lr,
-                ),
-            )
+            optimizer = _build_optimizer(model.trainable_parameters(), config.lr)
 
         model.train()
         optimizer.zero_grad()
@@ -347,19 +278,12 @@ def train(
                 optimizer.zero_grad(set_to_none=True)
                 step_loss = running_loss / microbatch_in_step
                 optimizer_step_in_epoch += 1
-                global_opt_step += 1
-                current_lr = strategy.lr_at_step(
-                    global_opt_step, warmup_opt_steps, total_opt_steps,
-                    config.lr,
-                )
-                _set_lr(optimizer, current_lr)
                 frac_epoch = (
                     epoch
                     - 1
                     + optimizer_step_in_epoch / optimizer_steps_per_epoch
                 )
                 writer.add_scalar("loss/train", step_loss, _to_step(frac_epoch))
-                writer.add_scalar("lr", current_lr, _to_step(frac_epoch))
                 history.train_loss.append((frac_epoch, step_loss))
                 pbar.set_postfix(loss=f"{step_loss:.4f}")
                 running_loss = 0.0
@@ -371,15 +295,8 @@ def train(
             optimizer.zero_grad(set_to_none=True)
             step_loss = running_loss / microbatch_in_step
             optimizer_step_in_epoch += 1
-            global_opt_step += 1
-            current_lr = strategy.lr_at_step(
-                global_opt_step, warmup_opt_steps, total_opt_steps,
-                config.lr,
-            )
-            _set_lr(optimizer, current_lr)
             frac_epoch = float(epoch)
             writer.add_scalar("loss/train", step_loss, _to_step(frac_epoch))
-            writer.add_scalar("lr", current_lr, _to_step(frac_epoch))
             history.train_loss.append((frac_epoch, step_loss))
 
         val_metrics = _evaluate(
@@ -468,11 +385,8 @@ def train(
     writer.add_hparams(
         {
             "model": config.model,
-            "strategy": config.strategy,
             "lr": config.lr,
-            "weight_decay": strategy.weight_decay,
-            "warmup_epochs": strategy.warmup_epochs,
-            "min_lr": strategy.min_lr_ref,
+            "weight_decay": WEIGHT_DECAY,
             "batch_size": config.batch_size,
             "accum_batch_size": config.accum_batch_size,
             "finetune": int(config.finetune),

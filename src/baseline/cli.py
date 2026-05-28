@@ -21,8 +21,6 @@ MODEL_CHOICES: tuple[str, ...] = (
     "deit_tiny",
 )
 
-STRATEGY_CHOICES: tuple[str, ...] = ("strategy1",)
-
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
@@ -42,11 +40,7 @@ class Config:
             initialised and ``freeze_epochs`` is ignored.
         freeze_epochs: Number of initial epochs during which every parameter
             outside of the classification head stays frozen.
-        lr: Peak learning rate reached at the end of warmup. Used as-is by
-            the optimiser regardless of batch size.
-        strategy: Training strategy controlling optimiser + LR schedule; one
-            of :data:`STRATEGY_CHOICES`. ``strategy1`` is AdamW + 10-epoch
-            linear warmup followed by cosine annealing.
+        lr: Constant learning rate used by AdamW.
         batch_size: Mini-batch size handed to the data loader.
         accum_batch_size: Effective batch size after gradient accumulation.
             Must be a multiple of ``batch_size``.
@@ -72,7 +66,6 @@ class Config:
     finetune: bool
     freeze_epochs: int
     lr: float
-    strategy: str
     batch_size: int
     accum_batch_size: int
     rotation_degrees: float
@@ -149,17 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--lr",
         type=float,
         default=1e-3,
-        help="Peak learning rate reached at the end of warmup.",
-    )
-    parser.add_argument(
-        "--strategy",
-        choices=STRATEGY_CHOICES,
-        default="strategy1",
-        help=(
-            "Training strategy (optimiser + LR schedule). strategy1: AdamW "
-            "with weight_decay=0.05, 10-epoch linear warmup from 1e-6 to lr, "
-            "then cosine annealing down to 1e-5 over the remaining epochs."
-        ),
+        help="Constant learning rate for AdamW.",
     )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--accum-batch-size", type=int, default=128)
@@ -198,7 +181,6 @@ def parse_args(argv: list[str] | None = None) -> Config:
         finetune=not args.from_scratch,
         freeze_epochs=args.freeze_epochs,
         lr=args.lr,
-        strategy=args.strategy,
         batch_size=args.batch_size,
         accum_batch_size=args.accum_batch_size,
         rotation_degrees=args.rotation_degrees,
