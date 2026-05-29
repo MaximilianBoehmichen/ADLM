@@ -1,5 +1,6 @@
 import torch
 from torch_geometric.data import Data
+from torch_geometric.utils import to_undirected
 
 
 def pos_normalization(
@@ -63,4 +64,19 @@ def basic_edge_attr(data: Data) -> Data:
     row, col = data.edge_index
     data.edge_attr = pos[row] - pos[col]
 
+    return data
+
+
+def to_undirected_transform(data: Data) -> Data:
+    """Symmetrize edge_index in place. Required for GCNConv on directed KNN graphs.
+
+    Why:
+        preprocess_dataset.py builds k directed edges per node (i -> j for each
+        of i's k nearest neighbors), so in-degree varies wildly while out-degree
+        is fixed at k. GCNConv assumes an undirected graph; passing a directed
+        one breaks the symmetric Laplacian normalization.
+    """
+    edge_index = data.edge_index
+    assert edge_index is not None
+    data.edge_index = to_undirected(edge_index, num_nodes=data.num_nodes)
     return data
