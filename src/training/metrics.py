@@ -25,7 +25,7 @@ class EpochMetrics:
         elif task == "binary-class":
             self.auroc = BinaryAUROC().to(device)
             self.acc = BinaryAccuracy().to(device)
-        else:  # multi-class
+        else:
             self.auroc = MulticlassAUROC(num_classes=num_classes, average="macro").to(device)
             self.acc = MulticlassAccuracy(num_classes=num_classes, average="micro").to(device)
         self._loss_sum = 0.0
@@ -34,7 +34,6 @@ class EpochMetrics:
     def update(self, logits: torch.Tensor, targets: torch.Tensor, loss: float):
         scores = predict_scores(logits.detach(), self.task)
         if self.task == "binary-class":
-            # Pass probability-of-positive to BinaryAUROC/Accuracy.
             pos_prob = scores[:, 1]
             self.auroc.update(pos_prob, targets.to(self.device).long())
             self.acc.update(pos_prob, targets.to(self.device).long())

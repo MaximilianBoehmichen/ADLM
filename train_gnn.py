@@ -17,7 +17,6 @@ import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.transforms import Compose
 
-# Make `src/` importable without an `src.` prefix (matches existing modules).
 ROOT = Path(__file__).parent
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -127,7 +126,6 @@ def main():
     args = parse_args()
     set_seed(args.seed)
 
-    # Resolve auto defaults
     if args.num_workers is None:
         args.num_workers = 0 if sys.platform == "darwin" else 4
     in_memory = args.in_memory or (args.dataset == "pneumoniamnist")

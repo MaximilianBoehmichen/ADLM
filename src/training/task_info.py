@@ -28,7 +28,6 @@ def build_loss(task: str, pos_weight: torch.Tensor | None,
                 "Use compute_or_load_pos_weight() to produce it."
             )
         return nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
-    # binary-class and multi-class both use CrossEntropyLoss on long targets
     return nn.CrossEntropyLoss()
 
 
