@@ -26,7 +26,7 @@ class Gaussian2DDataset(Dataset):
     files: list[Path] | list[str]
     """The actual files."""
 
-    data: list[Data]
+    data: list[Data | None]
     """The in memory data."""
 
     def __init__(
@@ -47,8 +47,13 @@ class Gaussian2DDataset(Dataset):
         Keyword Args:
             transforms: The transformations to apply to the data. Applied after built-in -1..1 pos range normalization.
                 Should use torch_geometric.transforms
-            in_memory (bool): Whether to keep the dataset in memory.
+            in_memory (bool): Whether to keep the dataset in memory. It lazily loads the dataset on first access,
+                e.g. during the first epoch.
             img_size (int): The size of the images to load.
+
+        Note:
+            With num_workers > 0, every worker gets its own data list (independent).
+            Without ``persistent_workers=True``, the cached list is discarded and reloaded!
         """
 
         self.root = Path(root) / split
@@ -65,11 +70,7 @@ class Gaussian2DDataset(Dataset):
             raise FileNotFoundError(f"Split {split} is empty")
 
         if self.in_memory:
-            self.data = []
-
-            for f in self.files:
-                d = torch.load(f, weights_only=False, map_location="cpu")  # better to first load to RAM not VRAM
-                self.data.append(d)
+            self.data = [None] * len(self.files)
 
     def __len__(self) -> int:
         """Gives the length of the dataset.
@@ -96,7 +97,14 @@ class Gaussian2DDataset(Dataset):
         d: Data
 
         if self.in_memory:
-            d = self.data[idx].clone()
+            dn: Data | None = self.data[idx]
+
+            if dn is None:
+                dn: Data = torch.load(self.files[idx], weights_only=False, map_location="cpu")
+                self.data[idx] = dn
+
+            d = dn.clone()
+
         else:
             d = torch.load(self.files[idx], weights_only=False, map_location="cpu")
 
