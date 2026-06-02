@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -10,6 +11,9 @@ from dataset.transforms import pos_normalization
 
 class Gaussian2DDataset(Dataset):
     """A torch dataset that loads our gaussian representations and ground truth."""
+
+    LOAD_ATTEMPTS = 6
+    LOAD_BASE_DELAY = 2.0
 
     root: Path
     """The root directory of the dataset"""
@@ -97,16 +101,13 @@ class Gaussian2DDataset(Dataset):
         d: Data
 
         if self.in_memory:
-            dn: Data | None = self.data[idx]
-
-            if dn is None:
-                dn: Data = torch.load(self.files[idx], weights_only=False, map_location="cpu")
-                self.data[idx] = dn
+            dn: Data = self.data[idx] or self._load_file(idx)
+            self.data[idx] = dn
 
             d = dn.clone()
 
         else:
-            d = torch.load(self.files[idx], weights_only=False, map_location="cpu")
+            d = self._load_file(idx)
 
         d = pos_normalization(d, self.img_size)  # explicit normalization outside the transforms (!)
 
@@ -114,3 +115,23 @@ class Gaussian2DDataset(Dataset):
             d = self.transforms(d)
 
         return d
+
+    def _load_file(self, idx: int) -> Data:
+        """Loads the data at the given index from disk.
+
+        Args:
+            idx (int): The index of the data.
+        """
+        file_path = self.files[idx]
+
+        for attempt in range(self.LOAD_ATTEMPTS):
+            try:
+                return torch.load(file_path, weights_only=False, map_location="cpu")
+            except (OSError, RuntimeError, EOFError) as e:
+                if attempt == self.LOAD_ATTEMPTS - 1:
+                    raise e
+
+                delay = self.LOAD_BASE_DELAY * 2**attempt
+                time.sleep(delay)
+
+        raise RuntimeError
