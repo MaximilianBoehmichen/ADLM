@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -10,6 +11,9 @@ from dataset.transforms import pos_normalization
 
 class Gaussian2DDataset(Dataset):
     """A torch dataset that loads our gaussian representations and ground truth."""
+
+    LOAD_ATTEMPTS = 6
+    LOAD_BASE_DELAY = 2.0
 
     root: Path
     """The root directory of the dataset"""
@@ -26,7 +30,7 @@ class Gaussian2DDataset(Dataset):
     files: list[Path] | list[str]
     """The actual files."""
 
-    data: list[Data]
+    data: list[Data | None]
     """The in memory data."""
 
     def __init__(
@@ -47,8 +51,13 @@ class Gaussian2DDataset(Dataset):
         Keyword Args:
             transforms: The transformations to apply to the data. Applied after built-in -1..1 pos range normalization.
                 Should use torch_geometric.transforms
-            in_memory (bool): Whether to keep the dataset in memory.
+            in_memory (bool): Whether to keep the dataset in memory. It lazily loads the dataset on first access,
+                e.g. during the first epoch.
             img_size (int): The size of the images to load.
+
+        Note:
+            With num_workers > 0, every worker gets its own data list (independent).
+            Without ``persistent_workers=True``, the cached list is discarded and reloaded!
         """
 
         self.root = Path(root) / split
@@ -65,11 +74,7 @@ class Gaussian2DDataset(Dataset):
             raise FileNotFoundError(f"Split {split} is empty")
 
         if self.in_memory:
-            self.data = []
-
-            for f in self.files:
-                d = torch.load(f, weights_only=False, map_location="cpu")  # better to first load to RAM not VRAM
-                self.data.append(d)
+            self.data = [None] * len(self.files)
 
     def __len__(self) -> int:
         """Gives the length of the dataset.
@@ -96,9 +101,13 @@ class Gaussian2DDataset(Dataset):
         d: Data
 
         if self.in_memory:
-            d = self.data[idx].clone()
+            dn: Data = self.data[idx] or self._load_file(idx)
+            self.data[idx] = dn
+
+            d = dn.clone()
+
         else:
-            d = torch.load(self.files[idx], weights_only=False, map_location="cpu")
+            d = self._load_file(idx)
 
         d = pos_normalization(d, self.img_size)  # explicit normalization outside the transforms (!)
 
@@ -106,3 +115,23 @@ class Gaussian2DDataset(Dataset):
             d = self.transforms(d)
 
         return d
+
+    def _load_file(self, idx: int) -> Data:
+        """Loads the data at the given index from disk.
+
+        Args:
+            idx (int): The index of the data.
+        """
+        file_path = self.files[idx]
+
+        for attempt in range(self.LOAD_ATTEMPTS):
+            try:
+                return torch.load(file_path, weights_only=False, map_location="cpu")
+            except (OSError, RuntimeError, EOFError) as e:
+                if attempt == self.LOAD_ATTEMPTS - 1:
+                    raise e
+
+                delay = self.LOAD_BASE_DELAY * 2**attempt
+                time.sleep(delay)
+
+        raise RuntimeError
