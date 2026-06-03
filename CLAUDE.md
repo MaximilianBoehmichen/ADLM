@@ -18,7 +18,7 @@ python preprocess_dataset.py --dataset pneumoniamnist --splits train val test
 python preprocess_dataset.py --dataset pneumoniamnist --splits test --max-epochs 50  # quick test
 ```
 
-No test suite exists yet. Validation is done visually via output images and PSNR metrics.
+No test suite. Validation is done via wandb metrics and visual inspection.
 
 ## Architecture
 
@@ -57,9 +57,28 @@ Output layout: `data/{dataset}/{split}/{index:05d}.pt`. Resumable — skips exis
 - `visualize_2d_gaussians()` — Gaussian ellipses overlaid on image (from live model)
 - `visualize_pt_file()` — visualize a saved `.pt` file (ellipses + KNN edges)
 
+### GNN Classifier (`src/model/gcn_classifier.py`, `train_gnn.py`)
+
+**ResGCNClassifier** — ResNet-inspired GCN graph classifier. Architecture:
+- Input projection: Linear(in_dim → hidden_dim, bias=False) → BN → ReLU
+- N × ResGCNBlock: GCNConv(hidden_dim, bias=False) → BN → residual skip → ReLU
+- Global mean pooling → Linear head
+
+No dropout (following ResNet design). Training uses Adam + cosine annealing, wandb logging.
+
+```bash
+# Local overfit sanity check
+python train_gnn.py --dataset pneumoniamnist --max-samples 32 --epochs 100
+
+# Full training on cluster
+python train_gnn.py --dataset chestmnist --data-root /vol/miltank/projects/practical_sose26/gaussian/data/chestmnist/chestmnistNEW --epochs 50
+```
+
 ### Data
 
 Git LFS tracks `data/**`. MedMNIST datasets are used (currently PneumoniaMNIST, ChestMNIST).
+
+**Cluster data location:** `/vol/miltank/projects/practical_sose26/gaussian/data/chestmnist/chestmnistNEW/{train,val,test}/`
 
 ## Key Dependencies
 

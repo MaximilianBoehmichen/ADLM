@@ -29,7 +29,7 @@ if sys.platform == "darwin":
 import wandb
 from dataset.gaussian2D import Gaussian2DDataset
 from dataset.transforms import encode_rotation, to_undirected_transform
-from model.gcn_classifier import GCNClassifier
+from model.gcn_classifier import ResGCNClassifier
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
@@ -58,7 +58,8 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--layers", type=int, default=3)
-    p.add_argument("--dropout", type=float, default=0.3)
+    p.add_argument("--max-samples", type=int, default=None,
+                   help="Cap dataset size (e.g. 32 to overfit a single batch)")
     p.add_argument("--in-memory", action="store_true",
                    help="Force in-memory dataset (default: auto by dataset size)")
     p.add_argument("--num-workers", type=int, default=None,
@@ -149,13 +150,18 @@ def main():
     test_ds = Gaussian2DDataset(root=data_root, split="test",
                                  transforms=transforms, in_memory=in_memory)
 
+    if args.max_samples is not None:
+        for ds in (train_ds, val_ds, test_ds):
+            ds.files = ds.files[:args.max_samples]
+            if ds.in_memory:
+                ds.data = ds.data[:args.max_samples]
+
     train_loader = make_loader(train_ds, args.batch_size, True, args.num_workers)
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = GCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
-                          num_layers=args.layers, dropout=args.dropout,
-                          task=task).to(device)
+    model = ResGCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
+                             num_layers=args.layers, task=task).to(device)
 
     pos_weight = None
     if task == "multi-label, binary-class":
