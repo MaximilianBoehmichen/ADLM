@@ -200,7 +200,7 @@ def main():
         test_eval = run_medmnist_evaluator(scores, args.dataset, "test")
         wandb.log({"test/auc": test_eval["AUC"], "test/acc": test_eval["ACC"]})
         print(f"TEST | AUC {test_eval['AUC']:.4f} | ACC {test_eval['ACC']:.4f}")
-    except AssertionError:
+    except Exception:
         tm = EpochMetrics(task, num_classes, device)
         evaluate(model, test_loader, loss_fn, device, tm, task)
         test_out = tm.compute()
