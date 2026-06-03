@@ -21,6 +21,9 @@ __pycache__/
 # Secrets
 .secrets
 
+# Cached computed files
+/cache/
+
 #logs
 /logging/
 /preprocess_logs/
