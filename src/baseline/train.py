@@ -170,7 +170,7 @@ def train(
 
     model.to(device)
     criterion = _build_criterion(dataset_info.is_multilabel)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
     steps_per_epoch = math.ceil(
         len(loaders.train) / config.accum_steps
     )  # optimizer steps/epoch
