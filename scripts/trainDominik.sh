@@ -18,7 +18,7 @@ cd /vol/miltank/users/hdo/ADLM
 uv run python train_gnn.py \
     --dataset chestmnist \
     --data-root /vol/miltank/users/hdo/data \
-    --max-samples 500 \
     --epochs 50 \
-    --batch-size 64 \
-    --num-workers 4
+    --batch-size 128 \
+    --num-workers 4 \
+    --weight-decay 1e-4 

@@ -16,6 +16,7 @@ import numpy as np
 import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.transforms import Compose
+from torch_geometric.utils import dropout_edge
 
 ROOT = Path(__file__).parent
 SRC = ROOT / "src"
@@ -56,6 +57,10 @@ def parse_args():
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--weight-decay", type=float, default=0.0,
+                   help="Adam weight decay (L2 regularization)")
+    p.add_argument("--drop-edge", type=float, default=0.0,
+                   help="DropEdge probability during training (0 = disabled)")
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--layers", type=int, default=3)
     p.add_argument("--max-samples", type=int, default=None,
@@ -78,10 +83,13 @@ def make_loader(ds, batch_size, shuffle, num_workers):
 
 
 def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics,
-                    task: str):
+                    task: str, drop_edge_p: float = 0.0):
     model.train()
     for batch in loader:
         batch = batch.to(device)
+        if drop_edge_p > 0:
+            batch.edge_index, _ = dropout_edge(batch.edge_index, p=drop_edge_p,
+                                               training=True)
         optim.zero_grad()
         logits = model(batch)
         targets = batch.y
@@ -171,13 +179,15 @@ def main():
                                                  cache_path=cache_path)
 
     loss_fn = build_loss(task, pos_weight, device)
-    optim = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optim = torch.optim.Adam(model.parameters(), lr=args.lr,
+                             weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
 
     for epoch in range(args.epochs):
         tm = EpochMetrics(task, num_classes, device)
         vm = EpochMetrics(task, num_classes, device)
-        train_one_epoch(model, train_loader, loss_fn, optim, device, tm, task)
+        train_one_epoch(model, train_loader, loss_fn, optim, device, tm, task,
+                        drop_edge_p=args.drop_edge)
         evaluate(model, val_loader, loss_fn, device, vm, task)
         sched.step()
 
