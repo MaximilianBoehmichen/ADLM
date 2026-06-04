@@ -189,8 +189,6 @@ def main():
     loss_fn = build_loss(task, pos_weight, device)
     optim = torch.optim.Adam(model.parameters(), lr=args.lr,
                              weight_decay=args.weight_decay)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
-
     for epoch in range(args.epochs):
         tm = EpochMetrics(task, num_classes, device)
         vm = EpochMetrics(task, num_classes, device)
@@ -204,14 +202,12 @@ def main():
         evaluate(model, val_loader, loss_fn, device, vm, task)
         t_val = time.perf_counter() - t0
 
-        sched.step()
-
         train_out = tm.compute()
         val_out = vm.compute()
         log = {f"train/{k}": v for k, v in train_out.items()}
         log.update({f"val/{k}": v for k, v in val_out.items()})
         log["epoch"] = epoch
-        log["lr"] = sched.get_last_lr()[0]
+        log["lr"] = args.lr
         log["time/train_s"] = t_train
         log["time/val_s"] = t_val
         log["time/epoch_s"] = t_train + t_val
