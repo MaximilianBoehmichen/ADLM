@@ -10,6 +10,7 @@ import argparse
 import os
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -151,12 +152,19 @@ def main():
 
     transforms = Compose([encode_rotation, to_undirected_transform])
     data_root = Path(args.data_root) / args.dataset
+
+    t0 = time.perf_counter()
     train_ds = Gaussian2DDataset(root=data_root, split="train",
                                   transforms=transforms, in_memory=in_memory)
     val_ds = Gaussian2DDataset(root=data_root, split="val",
                                 transforms=transforms, in_memory=in_memory)
     test_ds = Gaussian2DDataset(root=data_root, split="test",
                                  transforms=transforms, in_memory=in_memory)
+    t_load = time.perf_counter() - t0
+    print(f"Data loaded in {t_load:.1f}s "
+          f"(train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}, "
+          f"in_memory={in_memory})")
+    wandb.log({"time/data_load_s": t_load})
 
     if args.max_samples is not None:
         for ds in (train_ds, val_ds, test_ds):
@@ -186,9 +194,16 @@ def main():
     for epoch in range(args.epochs):
         tm = EpochMetrics(task, num_classes, device)
         vm = EpochMetrics(task, num_classes, device)
+
+        t0 = time.perf_counter()
         train_one_epoch(model, train_loader, loss_fn, optim, device, tm, task,
                         drop_edge_p=args.drop_edge)
+        t_train = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
         evaluate(model, val_loader, loss_fn, device, vm, task)
+        t_val = time.perf_counter() - t0
+
         sched.step()
 
         train_out = tm.compute()
@@ -197,10 +212,14 @@ def main():
         log.update({f"val/{k}": v for k, v in val_out.items()})
         log["epoch"] = epoch
         log["lr"] = sched.get_last_lr()[0]
+        log["time/train_s"] = t_train
+        log["time/val_s"] = t_val
+        log["time/epoch_s"] = t_train + t_val
         wandb.log(log)
         print(f"epoch {epoch:3d} | "
               f"train loss {train_out['loss']:.4f} auc {train_out['auroc']:.4f} | "
-              f"val loss {val_out['loss']:.4f} auc {val_out['auroc']:.4f}")
+              f"val loss {val_out['loss']:.4f} auc {val_out['auroc']:.4f} | "
+              f"{t_train + t_val:.1f}s")
 
     # Final headline test metric via official MedMNIST Evaluator. Evaluator
     # asserts y_score.shape[0] == full official split size; partial preprocessing
