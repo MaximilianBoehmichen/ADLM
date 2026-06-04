@@ -84,9 +84,14 @@ def make_loader(ds, batch_size, shuffle, num_workers):
 
 
 def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics,
-                    task: str, drop_edge_p: float = 0.0):
+                    task: str, drop_edge_p: float = 0.0) -> dict:
     model.train()
+    n_batches = 0
+    t_data, t_step = 0.0, 0.0
+    t0 = time.perf_counter()
     for batch in loader:
+        t_data += time.perf_counter() - t0
+        t0_step = time.perf_counter()
         batch = batch.to(device)
         if drop_edge_p > 0:
             batch.edge_index, _ = dropout_edge(batch.edge_index, p=drop_edge_p,
@@ -103,6 +108,11 @@ def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics
         loss.backward()
         optim.step()
         metrics.update(logits, targets, loss=loss.item())
+        t_step += time.perf_counter() - t0_step
+        n_batches += 1
+        t0 = time.perf_counter()
+    return {"data_ms": t_data / n_batches * 1000,
+            "step_ms": t_step / n_batches * 1000}
 
 
 @torch.no_grad()
@@ -194,8 +204,8 @@ def main():
         vm = EpochMetrics(task, num_classes, device)
 
         t0 = time.perf_counter()
-        train_one_epoch(model, train_loader, loss_fn, optim, device, tm, task,
-                        drop_edge_p=args.drop_edge)
+        iter_times = train_one_epoch(model, train_loader, loss_fn, optim, device,
+                                     tm, task, drop_edge_p=args.drop_edge)
         t_train = time.perf_counter() - t0
 
         t0 = time.perf_counter()
@@ -211,6 +221,8 @@ def main():
         log["time/train_s"] = t_train
         log["time/val_s"] = t_val
         log["time/epoch_s"] = t_train + t_val
+        log["time/iter_data_ms"] = iter_times["data_ms"]
+        log["time/iter_step_ms"] = iter_times["step_ms"]
         wandb.log(log)
         print(f"epoch {epoch:3d} | "
               f"train loss {train_out['loss']:.4f} auc {train_out['auroc']:.4f} | "
