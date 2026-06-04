@@ -58,9 +58,9 @@ class BaseModel(nn.Module):
     head: nn.Module
 
     def __init__(
-            self,
-            num_classes: int,
-            normalization: NormalizationStats,
+        self,
+        num_classes: int,
+        normalization: NormalizationStats,
     ) -> None:
         """Initialize the empty wrapper; subclasses populate the modules.
 
@@ -100,9 +100,9 @@ class BaseModel(nn.Module):
 
     @classmethod
     def load(
-            cls,
-            path: Path,
-            map_location: str | torch.device = "cpu",
+        cls,
+        path: Path,
+        map_location: str | torch.device = "cpu",
     ) -> tuple[Self, CheckpointMetrics]:
         """Load weights from ``path`` together with the stored metrics.
 
@@ -123,4 +123,3 @@ class BaseModel(nn.Module):
         model.normalization = NormalizationStats(mean=mean, std=std)  # type: ignore[arg-type]
         metrics = CheckpointMetrics(**payload["metrics"])
         return model, metrics
-

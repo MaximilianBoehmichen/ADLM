@@ -1,4 +1,3 @@
-import argparse
 import os
 import random
 import sys
@@ -9,7 +8,6 @@ import torch
 from torchinfo import summary
 
 from baseline.data import build_dataloaders, dataset_info
-from baseline.device import resolve_device
 from baseline.models import build_model
 from baseline.train import train
 
@@ -71,7 +69,7 @@ def main() -> None:
     )
 
     train(config, model, loaders, info)
-    
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

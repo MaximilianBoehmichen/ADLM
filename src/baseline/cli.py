@@ -1,4 +1,5 @@
 """CLI and configuration for baseline training."""
+
 import argparse
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -24,7 +25,10 @@ class Config:
     output_dir: Path
     seed: int
     device: torch.device
-    run_name: str = field(default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S"))
+    num_workers: int
+    run_name: str = field(
+        default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S")
+    )
     wandb: bool = False
     wandb_project: str = "ADLM-baseline"
     wandb_tags: tuple[str, ...] = ()
@@ -84,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Constant learning rate for AdamW.",
     )
     parser.add_argument(
-        "--image_size",
+        "--image-size",
         type=int,
         default=224,
         help="Dataset image size.",
@@ -93,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--accum-batch-size", type=int, default=128)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--seed", type=int, default=848577)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=1,
+    )
     parser.add_argument(
         "--run-name",
         default=None,
@@ -142,6 +151,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         accum_batch_size=args.accum_batch_size,
         output_dir=args.output_dir,
         seed=args.seed,
+        num_workers=args.num_workers,
         run_name=run_name,
         wandb=args.wandb,
         wandb_project=args.wandb_project,

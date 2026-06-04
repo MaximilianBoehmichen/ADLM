@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from baseline.models.base import BaseModel, CheckpointMetrics, NormalizationStats
+from baseline.models.base import BaseModel, NormalizationStats
 from baseline.models.resnet8 import ResNet8
 
 MODELS: dict[str, Callable[..., BaseModel]] = {
@@ -16,7 +16,9 @@ MODELS: dict[str, Callable[..., BaseModel]] = {
 }
 
 
-def build_model(name: str, num_classes: int, normalization: NormalizationStats) -> BaseModel:
+def build_model(
+    name: str, num_classes: int, normalization: NormalizationStats
+) -> BaseModel:
     """Instantiate the requested architecture.
 
     Args:

@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from baseline.cli import Config
-from baseline.models.base import BaseModel, NormalizationStats
+from baseline.models.base import NormalizationStats
 
 
 @dataclass(slots=True)
@@ -74,7 +74,9 @@ def dataset_info(name: str) -> DatasetInfo:
     )
 
 
-def _compute_dataset_stats(dataset: Dataset, in_channels: int = 1) -> tuple[list[float], list[float]]:
+def _compute_dataset_stats(
+    dataset: Dataset, in_channels: int = 1
+) -> tuple[list[float], list[float]]:
     """Compute per-channel mean/std over a dataset's raw images.
 
     Used when training from scratch so that the network sees normalized
@@ -94,11 +96,11 @@ def _compute_dataset_stats(dataset: Dataset, in_channels: int = 1) -> tuple[list
     for images, _ in loader:
         batch = images.view(images.size(0), in_channels, -1)
         total += batch.mean(dim=2).sum(dim=0)
-        sq_total += (batch ** 2).mean(dim=2).sum(dim=0)
+        sq_total += (batch**2).mean(dim=2).sum(dim=0)
         count += images.size(0)
 
     mean = total / count
-    var = sq_total / count - mean ** 2
+    var = sq_total / count - mean**2
     std = torch.sqrt(torch.clamp(var, min=1e-8))
 
     return mean.tolist(), std.tolist()
@@ -186,16 +188,10 @@ def build_dataloaders(config: Config) -> tuple[Loaders, NormalizationStats]:
         size=config.image_size,
     )
     raw_val = dataset_cls(
-        split="val",
-        download=True,
-        root=str(data_root),
-        size=config.image_size
+        split="val", download=True, root=str(data_root), size=config.image_size
     )
     raw_test = dataset_cls(
-        split="test",
-        download=True,
-        root=str(data_root),
-        size=config.image_size
+        split="test", download=True, root=str(data_root), size=config.image_size
     )
 
     # Per-channel mean/std on the raw training images.
@@ -230,8 +226,9 @@ def build_dataloaders(config: Config) -> tuple[Loaders, NormalizationStats]:
 
     loader_kwargs = {
         "pin_memory": True,
-        "persistent_workers": True,
-        "num_workers": 2,
+        "persistent_workers": True if config.num_workers > 0 else False,
+        "num_workers": config.num_workers,
+        "prefetch_factor": 2 if config.num_workers > 0 else None,
     }
     loaders = Loaders(
         train=DataLoader(

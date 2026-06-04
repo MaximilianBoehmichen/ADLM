@@ -24,16 +24,11 @@ class _BasicBlock(nn.Module):
             kernel_size=3,
             stride=stride,
             padding=1,
-            bias=False
+            bias=False,
         )
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.conv2 = nn.Conv2d(
-            out_channels,
-            out_channels,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            bias=False
+            out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False
         )
         self.bn2 = nn.BatchNorm2d(out_channels)
 
@@ -52,7 +47,7 @@ class _BasicBlock(nn.Module):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
 
-        identity = x[:, :, ::self.stride, ::self.stride]
+        identity = x[:, :, :: self.stride, :: self.stride]
         if self.pad:
             identity = F.pad(identity, (0, 0, 0, 0, self.pad, self.pad))
 
@@ -97,7 +92,9 @@ class _ResNet8Backbone(nn.Module):
 class ResNet8(BaseModel):
     """Small CIFAR-style ResNet with 8 weight layers."""
 
-    def __init__(self, num_classes: int, normalization: NormalizationStats, in_channels: int) -> None:
+    def __init__(
+        self, num_classes: int, normalization: NormalizationStats, in_channels: int
+    ) -> None:
         """Build a randomly-initialized ResNet-8.
 
         Args:

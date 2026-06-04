@@ -14,7 +14,8 @@ from tqdm import tqdm
 from baseline.cli import Config
 from baseline.data import DatasetInfo, Loaders
 from baseline.evaluation import evaluate
-from baseline.models import BaseModel, CheckpointMetrics
+from baseline.models import BaseModel
+from baseline.models.base import CheckpointMetrics
 from baseline.plot import save_roc_plot
 
 
@@ -50,7 +51,7 @@ class _WandbLogger:
             dir=str(wandb_dir),
             save_code=True,
         )
-        
+
         wandb.define_metric("epoch")
         wandb.define_metric("*", step_metric="epoch")
 
@@ -78,8 +79,8 @@ def _gpu_metrics(device: torch.device) -> dict[str, float]:
         return {}
 
     idx = device.index if device.index is not None else torch.cuda.current_device()
-    peak = torch.cuda.max_memory_allocated(idx) / (1024 ** 3)
-    reserved = torch.cuda.memory_reserved(idx) / (1024 ** 3)
+    peak = torch.cuda.max_memory_allocated(idx) / (1024**3)
+    reserved = torch.cuda.memory_reserved(idx) / (1024**3)
     torch.cuda.reset_peak_memory_stats(idx)
 
     return {
@@ -111,8 +112,8 @@ def _build_criterion(is_multilabel: bool) -> nn.Module:
 
 
 def _build_scheduler(
-        optimizer: torch.optim.Optimizer,
-        total_steps: int,
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
 ) -> torch.optim.lr_scheduler.LRScheduler:
     """Linear warmup over the first 10% of optimizer steps, then cosine.
 
@@ -123,7 +124,7 @@ def _build_scheduler(
     Returns:
         A per-step scheduler; call ``.step()`` once after each ``optimizer.step()``.
     """
-    warmup_steps = max(1, round(0.1 * total_steps))
+    warmup_steps = max(1, round(0.05 * total_steps))
     warmup = torch.optim.lr_scheduler.LinearLR(
         optimizer,
         start_factor=0.01,
@@ -144,10 +145,10 @@ def _build_scheduler(
 
 
 def train(
-        config: Config,
-        model: BaseModel,
-        loaders: Loaders,
-        dataset_info: DatasetInfo,
+    config: Config,
+    model: BaseModel,
+    loaders: Loaders,
+    dataset_info: DatasetInfo,
 ) -> None:
     """Run the full training procedure.
 
@@ -170,7 +171,9 @@ def train(
     model.to(device)
     criterion = _build_criterion(dataset_info.is_multilabel)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
-    steps_per_epoch = math.ceil(len(loaders.train) / config.accum_steps)  # optimizer steps/epoch
+    steps_per_epoch = math.ceil(
+        len(loaders.train) / config.accum_steps
+    )  # optimizer steps/epoch
     scheduler = _build_scheduler(optimizer, steps_per_epoch * config.epochs)
 
     config.model_dir.mkdir(parents=True, exist_ok=True)
@@ -200,23 +203,39 @@ def train(
                 epoch,
                 config,
             )
-            val = evaluate(model, loaders.val, device, config, dataset_info, split="val")
+            val = evaluate(
+                model,
+                loaders.val,
+                device,
+                config,
+                dataset_info,
+                split="val",
+                criterion=criterion,
+            )
 
             payload: dict[str, float] = {
                 "epoch": epoch,
                 "train/loss": train_loss,
+                "train/lr": float(scheduler.get_last_lr()[0]),
+                "val/loss": val.loss,
                 "val/auc": val.auc,
                 "val/acc": val.acc,
                 **_gpu_metrics(device),
             }
+
             for name, class_auc, class_acc in zip(
-                    dataset_info.class_names, val.per_class_auc, val.per_class_acc,
+                dataset_info.class_names,
+                val.per_class_auc,
+                val.per_class_acc,
             ):
                 payload[f"val_auc/{name}"] = class_auc
                 payload[f"val_acc/{name}"] = class_acc
 
             wandb_logger.log(payload)
-            print(f"epoch {epoch} | loss {train_loss:.4f} | val AUC {val.auc:.4f} | val ACC {val.acc:.4f}")
+            print(
+                f"epoch {epoch} | train loss {train_loss:.6f} | val loss {val.loss:.6f} "
+                f"| val AUC {val.auc:.4f} | val ACC {val.acc:.4f}"
+            )
 
             if val.auc > best_auc:
                 best_auc, best_epoch = val.auc, epoch
@@ -230,25 +249,43 @@ def train(
                         training_time_seconds=time.monotonic() - training_start,
                         device=str(device),
                         extra={
-                            "per_class_auc": dict(zip(dataset_info.class_names, val.per_class_auc)),
-                            "per_class_acc": dict(zip(dataset_info.class_names, val.per_class_acc)),
+                            "per_class_auc": dict(
+                                zip(dataset_info.class_names, val.per_class_auc)
+                            ),
+                            "per_class_acc": dict(
+                                zip(dataset_info.class_names, val.per_class_acc)
+                            ),
                         },
                     ),
                 )
             else:
                 epochs_without_improvement += 1
                 if epochs_without_improvement >= config.patience:
-                    print(f"Early stopping at epoch {epoch} (best AUC {best_auc:.4f} @ epoch {best_epoch}).")
+                    print(
+                        f"Early stopping at epoch {epoch} (best AUC {best_auc:.4f} @ epoch {best_epoch})."
+                    )
                     break
 
         # Final evaluation on the test split using the best checkpoint.
-        best_state = torch.load(best_path, map_location=device, weights_only=False)["state_dict"]
+        best_state = torch.load(best_path, map_location=device, weights_only=False)[
+            "state_dict"
+        ]
         model.load_state_dict(best_state)
-        test = evaluate(model, loaders.test, device, config, dataset_info, split="test")
+        test = evaluate(
+            model,
+            loaders.test,
+            device,
+            config,
+            dataset_info,
+            split="test",
+            criterion=criterion,
+        )
 
         print(f"TEST | AUC {test.auc:.4f} | ACC {test.acc:.4f}")
         for name, class_auc, class_acc in zip(
-                dataset_info.class_names, test.per_class_auc, test.per_class_acc,
+            dataset_info.class_names,
+            test.per_class_auc,
+            test.per_class_acc,
         ):
             print(f"  {name:<20} AUC {class_auc:.4f} | ACC {class_acc:.4f}")
 
@@ -264,21 +301,19 @@ def train(
         wandb_logger.summary_update(
             {"test/auc": test.auc, "test/acc": test.acc, "best_epoch": best_epoch},
         )
-    except BaseException as exc:  # noqa: BLE001 - close wandb on any crash/interrupt
-        raise
-    finally:
+    finally:  # close wandb correctly on any crash/interrupt
         wandb_logger.finish()
 
 
 def train_one_epoch(
-        model: BaseModel,
-        loader: DataLoader,
-        loss_function: nn.Module,
-        optimizer: torch.optim.Optimizer,
-        scheduler: torch.optim.lr_scheduler.LRScheduler,
-        device: torch.device,
-        epoch: int,
-        config: Config,
+    model: BaseModel,
+    loader: DataLoader,
+    loss_function: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    device: torch.device,
+    epoch: int,
+    config: Config,
 ) -> float:
     model.train()
     running_loss = 0.0
@@ -309,7 +344,3 @@ def train_one_epoch(
         scheduler.step()
 
     return running_loss / max(n_batches, 1)
-
-
-
-
