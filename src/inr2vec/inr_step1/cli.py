@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--epochs",
         type=int,
-        default=5000,
+        default=2000,
     )
     parser.add_argument(
         "--patience",

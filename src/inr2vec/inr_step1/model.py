@@ -5,12 +5,17 @@ from torch import nn
 class PositionalEncoder(nn.Module):
     """Base encoder."""
 
-    def __init__(self, num_frequencies: int, num_bands: int, sigma: float = 10.0,
-                 seed: int = 42) -> None:
+    def __init__(
+        self, num_frequencies: int, num_bands: int, sigma: float = 10.0, seed: int = 42
+    ) -> None:
         super().__init__()
-        self.register_buffer("B", self._build_B(num_frequencies, num_bands, sigma, seed))
+        self.register_buffer(
+            "B", self._build_B(num_frequencies, num_bands, sigma, seed)
+        )
 
-    def _build_B(self, num_frequencies: int, num_bands: int, sigma: float, seed: int) -> torch.Tensor:
+    def _build_B(
+        self, num_frequencies: int, num_bands: int, sigma: float, seed: int
+    ) -> torch.Tensor:
         raise NotImplementedError
 
     @property
@@ -32,8 +37,10 @@ class MixedPE(PositionalEncoder):
     But this means it is now neither NeRF nor RFF.
     """
 
-    def _build_B(self, num_frequencies: int, num_bands: int, sigma: float, seed: int) -> torch.Tensor:
-        golden = torch.pi * (3.0 - 5.0 ** 0.5)
+    def _build_B(
+        self, num_frequencies: int, num_bands: int, sigma: float, seed: int
+    ) -> torch.Tensor:
+        golden = torch.pi * (3.0 - 5.0**0.5)
         j = torch.arange(num_frequencies)
 
         angles = (j * golden) % torch.pi
@@ -44,9 +51,13 @@ class MixedPE(PositionalEncoder):
 class RFFPE(PositionalEncoder):
     """Random Gaussian Fourier features."""
 
-    def _build_B(self, num_frequencies: int, num_bands: int, sigma: float, seed: int) -> torch.Tensor:
+    def _build_B(
+        self, num_frequencies: int, num_bands: int, sigma: float, seed: int
+    ) -> torch.Tensor:
         generator = torch.Generator().manual_seed(seed)
-        return 2 * torch.pi * torch.randn(2, num_frequencies, generator=generator) * sigma
+        return (
+            2 * torch.pi * torch.randn(2, num_frequencies, generator=generator) * sigma
+        )
 
 
 class INR(nn.Module):

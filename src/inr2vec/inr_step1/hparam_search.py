@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import random
 
 import numpy as np
 import torch
@@ -14,9 +15,9 @@ from inr2vec.inr_step1.defs import HPARAMS_SEARCH_SPACE
 from inr2vec.inr_step1.model import INR, MixedPE
 from inr2vec.inr_step1.train import train_inr
 
-PARAM_MAX_BUDGET = 6_500
-PARAM_MIN_BUDGET = 4_000
-NUM_IMAGES = 256
+PARAM_MAX_BUDGET = 6_400
+PARAM_MIN_BUDGET = 4_800
+NUM_IMAGES = 64
 
 
 def _count_params(model: torch.nn.Module) -> int:
@@ -32,12 +33,10 @@ def grid_search(config: Config) -> None:
     """
     device = config.device
 
-    dataset = load_split(config.dataset, split="train", size=config.image_size)
+    dataset = load_split(config.dataset, split="test", size=config.image_size)
     coords = make_coord_grid(config.image_size, config.image_size, device)
-    targets = [
-        to_tensor(dataset[i][0]).reshape(-1, 1).to(device)
-        for i in range(NUM_IMAGES)
-    ]
+    indices = random.Random(config.seed).sample(range(len(dataset)), NUM_IMAGES)
+    targets = [to_tensor(dataset[i][0]).reshape(-1, 1).to(device) for i in indices]
 
     keys = list(HPARAMS_SEARCH_SPACE)
     combos = [
@@ -48,12 +47,17 @@ def grid_search(config: Config) -> None:
     results: list[tuple[float, int, dict[str, int]]] = []
     skipped = 0
 
-    print(f"Device: {device} | {NUM_IMAGES} images @ {config.image_size}px | "
-          f"{config.epochs} steps/image | {len(combos)} configs")
+    print(
+        f"Device: {device} | {NUM_IMAGES} images @ {config.image_size}px | "
+        f"{config.epochs} steps/image | {len(combos)} configs"
+    )
 
     for hparams in tqdm(combos, desc="configs"):
         if hparams["pe"] is MixedPE:
-            if hparams["seed"] != HPARAMS_SEARCH_SPACE["seed"][0] or hparams["sigma"] != HPARAMS_SEARCH_SPACE["sigma"][0]:
+            if (
+                hparams["seed"] != HPARAMS_SEARCH_SPACE["seed"][0]
+                or hparams["sigma"] != HPARAMS_SEARCH_SPACE["sigma"][0]
+            ):
                 skipped += 1
                 continue
 
@@ -75,18 +79,29 @@ def grid_search(config: Config) -> None:
         for target in pbar:
             model = INR(**hparams).to(device)
             psnrs.append(
-                train_inr(model, coords, target, config.epochs, config.lr, patience=config.patience)
+                train_inr(
+                    model,
+                    coords,
+                    target,
+                    config.epochs,
+                    config.lr,
+                    patience=config.patience,
+                )
             )
 
             pbar.set_postfix(psnr=f"{np.mean(psnrs):.3f}")
 
         mean_psnr = float(np.mean(psnrs))
         results.append((mean_psnr, n_params, hparams))
-        print(f"done | mean PSNR {mean_psnr:6.3f} dB | {n_params:5d} params | {hparams}")
+        print(
+            f"done | mean PSNR {mean_psnr:6.3f} dB | {n_params:5d} params | {hparams}"
+        )
 
     results.sort(key=lambda r: r[0], reverse=True)
-    print(f"\n=== Ranking by mean PSNR "
-          f"({len(results)} configs in budget, {skipped} skipped > {PARAM_MAX_BUDGET} params) ===")
+    print(
+        f"\n=== Ranking by mean PSNR "
+        f"({len(results)} configs in budget, {skipped} skipped > {PARAM_MAX_BUDGET} params) ==="
+    )
     for rank, (mean_psnr, n_params, hparams) in enumerate(results, start=1):
         print(f"{rank:3d}. {mean_psnr:6.3f} dB | {n_params:5d} params | {hparams}")
 
