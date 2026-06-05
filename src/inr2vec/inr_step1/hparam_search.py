@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import itertools
 import random
+from pathlib import Path
 
+import medmnist
 import numpy as np
 import torch
+from medmnist import INFO
 from tqdm import tqdm
 
-from inr2vec.fit_inr import load_split, make_coord_grid, to_tensor
 from inr2vec.inr_step1.cli import Config, parse_args
-from inr2vec.inr_step1.defs import HPARAMS_SEARCH_SPACE
+from inr2vec.inr_step1.defs import DEFAULT_ROOT, HPARAMS_SEARCH_SPACE
 from inr2vec.inr_step1.model import INR, MixedPE
 from inr2vec.inr_step1.train import train_inr
 
@@ -104,6 +106,31 @@ def grid_search(config: Config) -> None:
     )
     for rank, (mean_psnr, n_params, hparams) in enumerate(results, start=1):
         print(f"{rank:3d}. {mean_psnr:6.3f} dB | {n_params:5d} params | {hparams}")
+
+
+def make_coord_grid(h: int, w: int, device) -> torch.Tensor:
+    ys = torch.linspace(-1, 1, h, device=device)
+    xs = torch.linspace(-1, 1, w, device=device)
+    gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+    return torch.stack([gx, gy], dim=-1).reshape(-1, 2)
+
+
+def load_split(dataset: str, split: str, size: int = 224, root: Path = DEFAULT_ROOT):
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    info = INFO[dataset]
+    DataClass = getattr(medmnist, info["python_class"])
+    ds = DataClass(split=split, download=True, size=size, root=str(root))
+    return ds
+
+
+def to_tensor(img_np: np.ndarray) -> torch.Tensor:
+    arr = np.asarray(img_np, dtype=np.float32) / 255.0
+    if arr.ndim == 2:
+        arr = arr[None]
+    else:
+        arr = arr.transpose(2, 0, 1)
+    return torch.from_numpy(arr)
 
 
 if __name__ == "__main__":

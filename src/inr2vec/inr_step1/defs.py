@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from inr2vec.inr_step1.model import MixedPE, RFFPE
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ROOT = PROJECT_ROOT / "data" / "medmnist_cache"
 
 HPARAMS_SEARCH_SPACE: dict[str, list] = {
     "hidden_dim": [16, 24, 32, 48, 64, 96],
