@@ -19,10 +19,10 @@ uv run python train_gnn.py \
     --dataset chestmnist \
     --data-root /vol/miltank/users/hdo/data \
     --epochs 50 \
-    --batch-size 256 \
+    --batch-size 128 \
     --num-workers 4 \
     --layers 6 \
     --hidden 112 \
     --weight-decay 1e-4 \
-    --max-samples 10000
+    --max-samples 1000
     

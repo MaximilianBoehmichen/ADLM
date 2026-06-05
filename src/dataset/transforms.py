@@ -67,6 +67,16 @@ def basic_edge_attr(data: Data) -> Data:
     return data
 
 
+def drop_pos_from_x(data: Data) -> Data:
+    """Remove absolute positions (x[:, :2]) from node features.
+
+    Spatial information is instead captured via relative edge attributes
+    (basic_edge_attr). Must run after encode_rotation and basic_edge_attr.
+    """
+    data.x = data.x[:, 2:]
+    return data
+
+
 def to_undirected_transform(data: Data) -> Data:
     """Symmetrize edge_index in place. Required for GCNConv on directed KNN graphs.
 

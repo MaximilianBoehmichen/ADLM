@@ -30,7 +30,12 @@ if sys.platform == "darwin":
 
 import wandb
 from dataset.gaussian2D import Gaussian2DDataset
-from dataset.transforms import encode_rotation, to_undirected_transform
+from dataset.transforms import (
+    basic_edge_attr,
+    drop_pos_from_x,
+    encode_rotation,
+    to_undirected_transform,
+)
 from model.gcn_classifier import ResGCNClassifier
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
@@ -160,7 +165,8 @@ def main():
     task = task_info["task"]
     num_classes = task_info["num_classes"]
 
-    transforms = Compose([encode_rotation, to_undirected_transform])
+    transforms = Compose([encode_rotation, to_undirected_transform,
+                           basic_edge_attr, drop_pos_from_x])
     data_root = Path(args.data_root) / args.dataset
 
     t0 = time.perf_counter()
@@ -186,8 +192,8 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResGCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
-                             num_layers=args.layers, task=task).to(device)
+    model = ResGCNClassifier(in_dim=5, hidden_dim=args.hidden, num_classes=num_classes,
+                             num_layers=args.layers, task=task, edge_dim=2).to(device)
 
     pos_weight = None
     if task == "multi-label, binary-class":
