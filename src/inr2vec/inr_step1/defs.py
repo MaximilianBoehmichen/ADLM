@@ -2,7 +2,7 @@ from pathlib import Path
 
 from inr2vec.inr_step1.model import MixedPE, RFFPE
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_ROOT = PROJECT_ROOT / "data" / "medmnist_cache"
 
 HPARAMS_SEARCH_SPACE: dict[str, list] = {
