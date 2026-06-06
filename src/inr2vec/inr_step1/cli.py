@@ -21,6 +21,8 @@ class Config:
     seed: int
     device: torch.device
     num_workers: int
+    start: int
+    end: int
     image_size: int = 224
     run_name: str = field(
         default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -90,6 +92,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
     )
     parser.add_argument(
+        "--start",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--end",
+        type=int,
+        default=2**32,
+    )
+    parser.add_argument(
         "--run-name",
         default=None,
         help="Optional override for the run name (default: current timestamp).",
@@ -140,4 +152,6 @@ def parse_args(argv: list[str] | None = None) -> Config:
         wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_tags=tuple(args.wandb_tags),
+        start=args.start,
+        end=args.end,
     )

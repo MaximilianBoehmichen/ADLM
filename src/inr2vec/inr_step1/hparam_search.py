@@ -54,7 +54,7 @@ def grid_search(config: Config) -> None:
         f"{config.epochs} steps/image | {len(combos)} configs"
     )
 
-    for hparams in tqdm(combos, desc="configs"):
+    for hparams in tqdm(combos[config.start:config.end], desc="configs"):
         if hparams["pe"] is MixedPE:
             if (
                 hparams["seed"] != HPARAMS_SEARCH_SPACE["seed"][0]
