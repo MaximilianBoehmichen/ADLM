@@ -62,8 +62,10 @@ def parse_args():
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--weight-decay", type=float, default=0.0,
-                   help="Adam weight decay (L2 regularization)")
+    p.add_argument("--weight-decay", type=float, default=1e-3,
+                   help="AdamW weight decay (L2 regularization)")
+    p.add_argument("--dropout", type=float, default=0.3,
+                   help="Node feature dropout probability after each block")
     p.add_argument("--drop-edge", type=float, default=0.0,
                    help="DropEdge probability during training (0 = disabled)")
     p.add_argument("--hidden", type=int, default=64)
@@ -215,7 +217,8 @@ def main():
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
     model = ResGCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
-                             num_layers=args.layers, task=task).to(device)
+                             num_layers=args.layers, task=task,
+                             dropout_p=args.dropout).to(device)
 
     pos_weight = None
     if task == "multi-label, binary-class":

@@ -31,8 +31,8 @@ uv run python train_gnn.py \
     --num-workers 4 \
     --layers ${LAYERS} \
     --hidden 64 \
-    --weight-decay 1e-4 \
-    --max-samples 1000
+    --weight-decay 1e-3 \
+    --dropout 0.3
 EOF
     echo "Submitted layers=${LAYERS}"
 done

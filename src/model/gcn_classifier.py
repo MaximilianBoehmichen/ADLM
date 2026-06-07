@@ -58,14 +58,15 @@ class RelPosResBlock(MessagePassing):
 
 
 class ResGCNClassifier(nn.Module):
-    def __init__(self, in_dim: int = 5, hidden_dim: int = 64,
+    def __init__(self, in_dim: int = 7, hidden_dim: int = 64,
                  num_classes: int = 2, num_layers: int = 3,
-                 task: str = "multi-class", **kwargs):
+                 task: str = "multi-class", dropout_p: float = 0.3, **kwargs):
         super().__init__()
         self.task = task
+        self.dropout_p = dropout_p
         self.input_proj = nn.Sequential(
             nn.Linear(in_dim, hidden_dim, bias=False),
-            nn.BatchNorm1d(hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
         )
         self.blocks = nn.ModuleList(
@@ -76,7 +77,7 @@ class ResGCNClassifier(nn.Module):
             nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.BatchNorm1d(hidden_dim),
+                nn.LayerNorm(hidden_dim),
             ) for _ in range(num_layers)
         ])
         self.head = nn.Linear(hidden_dim * 2, num_classes)
@@ -84,8 +85,10 @@ class ResGCNClassifier(nn.Module):
     def forward(self, data) -> torch.Tensor:
         x, pos, edge_index, batch = data.x, data.pos, data.edge_index, data.batch
         x = self.input_proj(x)
+        x = F.dropout(x, p=self.dropout_p, training=self.training)
         for block, vn_mlp in zip(self.blocks, self.vn_mlps):
             x = block(x, pos, edge_index)
+            x = F.dropout(x, p=self.dropout_p, training=self.training)
             vn = global_mean_pool(x, batch)
             x = x + vn_mlp(vn)[batch]
         x = torch.cat([global_mean_pool(x, batch),
