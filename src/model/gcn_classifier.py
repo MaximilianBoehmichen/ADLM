@@ -30,12 +30,13 @@ class MLPPooling(nn.Module):
             ReLU(),
         )
         self.drop = nn.Dropout(dropout_p)
-        self.head = Linear(hidden_dim, num_classes)
+        self.head = Linear(hidden_dim * 2, num_classes)
 
     def forward(self, data) -> torch.Tensor:
         x = self.proj(data.x)
         x = self.drop(x)
-        x = global_mean_pool(x, data.batch)
+        x = torch.cat([global_mean_pool(x, data.batch),
+                        global_max_pool(x, data.batch)], dim=1)
         return self.head(x)
 
     @property
@@ -62,7 +63,7 @@ class SimpleGCN(nn.Module):
         self.norms = nn.ModuleList(
             [LayerNorm(hidden_dim) for _ in range(num_layers)]
         )
-        self.head = Linear(hidden_dim, num_classes)
+        self.head = Linear(hidden_dim * 2, num_classes)
 
     def forward(self, data) -> torch.Tensor:
         x, edge_index, batch = data.x, data.edge_index, data.batch
@@ -70,7 +71,8 @@ class SimpleGCN(nn.Module):
         for conv, norm in zip(self.convs, self.norms):
             x = F.relu(norm(conv(x, edge_index)))
             x = F.dropout(x, p=self.dropout_p, training=self.training)
-        x = global_mean_pool(x, batch)
+        x = torch.cat([global_mean_pool(x, batch),
+                        global_max_pool(x, batch)], dim=1)
         return self.head(x)
 
     @property
@@ -119,14 +121,15 @@ class RelPosGNN(nn.Module):
         self.blocks = nn.ModuleList(
             [RelPosBlock(hidden_dim, dropout_p) for _ in range(num_layers)]
         )
-        self.head = Linear(hidden_dim, num_classes)
+        self.head = Linear(hidden_dim * 2, num_classes)
 
     def forward(self, data) -> torch.Tensor:
         x, pos, edge_index, batch = data.x, data.pos, data.edge_index, data.batch
         x = self.proj(x)
         for block in self.blocks:
             x = block(x, pos, edge_index)
-        x = global_mean_pool(x, batch)
+        x = torch.cat([global_mean_pool(x, batch),
+                        global_max_pool(x, batch)], dim=1)
         return self.head(x)
 
     @property
