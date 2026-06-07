@@ -75,7 +75,7 @@ class FeatureNormalization:
 
     Normalizes x columns to zero-mean unit-variance. Compute stats from the
     training set only, then apply to train/val/test with the same parameters.
-    Must run after drop_pos_from_x so it only sees the 5 non-position features.
+    Applied after all other transforms in the pipeline.
     """
 
     def __init__(self, mean: torch.Tensor, std: torch.Tensor) -> None:

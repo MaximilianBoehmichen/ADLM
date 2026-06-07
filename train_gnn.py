@@ -35,7 +35,7 @@ from dataset.transforms import (
     encode_rotation,
     to_undirected_transform,
 )
-from model.gcn_classifier import ResGCNClassifier
+from model.gcn_classifier import MODEL_REGISTRY
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
@@ -68,8 +68,11 @@ def parse_args():
                    help="Node feature dropout probability after each block")
     p.add_argument("--drop-edge", type=float, default=0.0,
                    help="DropEdge probability during training (0 = disabled)")
+    p.add_argument("--model", default="mlp",
+                   choices=list(MODEL_REGISTRY.keys()),
+                   help="Model architecture level: mlp, gcn, relpos, full")
     p.add_argument("--hidden", type=int, default=64)
-    p.add_argument("--layers", type=int, default=3)
+    p.add_argument("--layers", type=int, default=2)
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap dataset size (e.g. 32 to overfit a single batch)")
     p.add_argument("--in-memory", action="store_true",
@@ -216,9 +219,13 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResGCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
-                             num_layers=args.layers, task=task,
-                             dropout_p=args.dropout).to(device)
+    model_cls = MODEL_REGISTRY[args.model]
+    model = model_cls(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
+                      num_layers=args.layers, task=task,
+                      dropout_p=args.dropout).to(device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model: {args.model} | layers={model.num_layers} | params={n_params:,}")
+    wandb.config.update({"model_name": args.model, "n_params": n_params})
 
     pos_weight = None
     if task == "multi-label, binary-class":
