@@ -32,7 +32,6 @@ import wandb
 from dataset.gaussian2D import Gaussian2DDataset
 from dataset.transforms import (
     FeatureNormalization,
-    drop_pos_from_x,
     encode_rotation,
     to_undirected_transform,
 )
@@ -167,7 +166,7 @@ def main():
     task = task_info["task"]
     num_classes = task_info["num_classes"]
 
-    transforms = Compose([encode_rotation, to_undirected_transform, drop_pos_from_x])
+    transforms = Compose([encode_rotation, to_undirected_transform])
     data_root = Path(args.data_root) / args.dataset
 
     t0 = time.perf_counter()
@@ -191,7 +190,7 @@ def main():
 
     stats_path = ROOT / "cache" / args.dataset / "feature_stats.pt"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
-    expected_in_dim = 5
+    expected_in_dim = 7
     cache_valid = False
     if stats_path.exists() and args.max_samples is None:
         saved = torch.load(stats_path, weights_only=True)
@@ -215,7 +214,7 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResGCNClassifier(in_dim=5, hidden_dim=args.hidden, num_classes=num_classes,
+    model = ResGCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
                              num_layers=args.layers, task=task).to(device)
 
     pos_weight = None
