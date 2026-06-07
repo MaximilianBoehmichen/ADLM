@@ -86,8 +86,12 @@ class ResGCNClassifier(nn.Module):
         x = self.input_proj(x)
         for block, vn_mlp in zip(self.blocks, self.vn_mlps):
             x = block(x, pos, edge_index)
-            vn = global_mean_pool(x, batch)      # [G, H] — global summary
-            x = x + vn_mlp(vn)[batch]            # broadcast back to all nodes
+            vn = global_mean_pool(x, batch)
+            x = x + vn_mlp(vn)[batch]
         x = torch.cat([global_mean_pool(x, batch),
                         global_max_pool(x, batch)], dim=1)
         return self.head(x)
+
+    @property
+    def num_layers(self) -> int:
+        return len(self.blocks)
