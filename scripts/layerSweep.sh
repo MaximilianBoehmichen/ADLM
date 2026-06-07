@@ -1,15 +1,19 @@
 #!/bin/bash
-# Submit one job per layer count (0-3) to find where message passing helps.
-# Usage: bash scripts/layerSweep.sh
+# Submit one job per layer count to find where message passing helps.
+# Usage: bash scripts/layerSweep.sh [LAYERS...]
+# Default: layers 0 1 (2-job limit). Run again with "2 3" after first pair finishes.
+# Example: bash scripts/layerSweep.sh 2 3
 
-for LAYERS in 0 1 2 3; do
+LAYER_LIST="${@:-0 1}"
+
+for LAYERS in $LAYER_LIST; do
     sbatch <<EOF
 #!/bin/bash
 #SBATCH --job-name=gnn-layers${LAYERS}
 #SBATCH --output=/vol/miltank/users/hdo/logs/%A-layers${LAYERS}.out
 #SBATCH --error=/vol/miltank/users/hdo/logs/%A-layers${LAYERS}.err
 #SBATCH --mail-type=END,FAIL
-#SBATCH --time=0-04:00:00
+#SBATCH --time=0-02:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
@@ -27,7 +31,8 @@ uv run python train_gnn.py \
     --num-workers 4 \
     --layers ${LAYERS} \
     --hidden 64 \
-    --weight-decay 1e-4
+    --weight-decay 1e-4 \
+    --max-samples 1000
 EOF
     echo "Submitted layers=${LAYERS}"
 done

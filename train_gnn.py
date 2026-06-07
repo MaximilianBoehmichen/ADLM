@@ -191,11 +191,17 @@ def main():
 
     stats_path = ROOT / "cache" / args.dataset / "feature_stats.pt"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_in_dim = 5
+    cache_valid = False
     if stats_path.exists() and args.max_samples is None:
         saved = torch.load(stats_path, weights_only=True)
         mean, std = saved["mean"], saved["std"]
-        print(f"Loaded cached feature stats from {stats_path}")
-    else:
+        if mean.shape[0] == expected_in_dim:
+            cache_valid = True
+            print(f"Loaded cached feature stats from {stats_path}")
+        else:
+            print(f"Stale cache (dim {mean.shape[0]} != {expected_in_dim}), recomputing...")
+    if not cache_valid:
         print("Computing feature statistics from training set...")
         mean, std = FeatureNormalization.compute_stats(train_ds)
         if args.max_samples is None:
