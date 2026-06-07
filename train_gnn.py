@@ -220,8 +220,8 @@ def main():
                                                  cache_path=cache_path)
 
     loss_fn = build_loss(task, pos_weight, device)
-    optim = torch.optim.Adam(model.parameters(), lr=args.lr,
-                             weight_decay=args.weight_decay)
+    optim = torch.optim.AdamW(model.parameters(), lr=args.lr,
+                              weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
 
     for epoch in range(args.epochs):
