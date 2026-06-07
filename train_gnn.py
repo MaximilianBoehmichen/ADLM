@@ -30,7 +30,12 @@ if sys.platform == "darwin":
 
 import wandb
 from dataset.gaussian2D import Gaussian2DDataset
-from dataset.transforms import drop_pos_from_x, encode_rotation, to_undirected_transform
+from dataset.transforms import (
+    FeatureNormalization,
+    drop_pos_from_x,
+    encode_rotation,
+    to_undirected_transform,
+)
 from model.gcn_classifier import ResGCNClassifier
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
@@ -184,6 +189,22 @@ def main():
             if ds.in_memory:
                 ds.data = ds.data[:args.max_samples]
 
+    stats_path = ROOT / "cache" / args.dataset / "feature_stats.pt"
+    stats_path.parent.mkdir(parents=True, exist_ok=True)
+    if stats_path.exists() and args.max_samples is None:
+        saved = torch.load(stats_path, weights_only=True)
+        mean, std = saved["mean"], saved["std"]
+        print(f"Loaded cached feature stats from {stats_path}")
+    else:
+        print("Computing feature statistics from training set...")
+        mean, std = FeatureNormalization.compute_stats(train_ds)
+        if args.max_samples is None:
+            torch.save({"mean": mean, "std": std}, stats_path)
+    feat_norm = FeatureNormalization(mean, std)
+    for ds in (train_ds, val_ds, test_ds):
+        old = ds.transforms
+        ds.transforms = Compose([old, feat_norm]) if old else feat_norm
+
     train_loader = make_loader(train_ds, args.batch_size, True, args.num_workers)
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
@@ -201,6 +222,8 @@ def main():
     loss_fn = build_loss(task, pos_weight, device)
     optim = torch.optim.Adam(model.parameters(), lr=args.lr,
                              weight_decay=args.weight_decay)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
+
     for epoch in range(args.epochs):
         tm = EpochMetrics(task, num_classes, device)
         vm = EpochMetrics(task, num_classes, device)
@@ -218,8 +241,9 @@ def main():
         val_out = vm.compute()
         log = {f"train/{k}": v for k, v in train_out.items()}
         log.update({f"val/{k}": v for k, v in val_out.items()})
+        sched.step()
         log["epoch"] = epoch
-        log["lr"] = args.lr
+        log["lr"] = sched.get_last_lr()[0]
         log["time/train_s"] = t_train
         log["time/val_s"] = t_val
         log["time/epoch_s"] = t_train + t_val

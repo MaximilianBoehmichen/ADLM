@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import torch
+from torch.utils.data import Dataset
 from torch_geometric.data import Data
 from torch_geometric.utils import to_undirected
 
@@ -65,6 +68,32 @@ def basic_edge_attr(data: Data) -> Data:
     data.edge_attr = pos[row] - pos[col]
 
     return data
+
+
+class FeatureNormalization:
+    """Per-feature z-score standardization using precomputed training set statistics.
+
+    Normalizes x columns to zero-mean unit-variance. Compute stats from the
+    training set only, then apply to train/val/test with the same parameters.
+    Must run after drop_pos_from_x so it only sees the 5 non-position features.
+    """
+
+    def __init__(self, mean: torch.Tensor, std: torch.Tensor) -> None:
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, data: Data) -> Data:
+        data.x = (data.x - self.mean) / self.std
+        return data
+
+    @staticmethod
+    def compute_stats(dataset: Dataset) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute per-feature mean and std over all nodes in the dataset."""
+        all_x = [dataset[i].x for i in range(len(dataset))]
+        x = torch.cat(all_x, dim=0)
+        mean = x.mean(dim=0)
+        std = x.std(dim=0).clamp(min=1e-6)
+        return mean, std
 
 
 def drop_pos_from_x(data: Data) -> Data:
