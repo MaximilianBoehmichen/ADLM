@@ -65,8 +65,9 @@ def image_to_pixel_graph(img: torch.Tensor, k: int) -> Data:
 
 
 def process_split(dataset_flag: str, split: str, output_dir: Path,
-                  k: int, max_samples: int | None = None):
-    dataset, info, D = load_medmnist_dataset(dataset_flag, split=split, size=IMG_SIZE)
+                  k: int, max_samples: int | None = None, medmnist_root: str | None = None):
+    dataset, info, D = load_medmnist_dataset(dataset_flag, split=split, size=IMG_SIZE,
+                                             root=medmnist_root)
     assert D == 2, "Only 2D datasets are supported."
     task = info["task"]
 
@@ -105,13 +106,17 @@ def main():
                    help="KNN degree (default 8 — each pixel connects to its 8 spatial neighbours)")
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap per-split sample count (e.g. 1000 for a quick signal run)")
+    p.add_argument("--medmnist-root", type=str, default=None,
+                   help="Directory for medmnist raw data (default: ~/.medmnist). "
+                        "On cluster: /vol/miltank/users/hdo/medmnist")
     args = p.parse_args()
 
     output_dir = Path(args.output_dir)
     for split in args.splits:
         print(f"\n--- {args.dataset} [{split}] (28×28, {IMG_SIZE*IMG_SIZE} nodes) ---")
         process_split(args.dataset, split, output_dir,
-                      k=args.k_graph, max_samples=args.max_samples)
+                      k=args.k_graph, max_samples=args.max_samples,
+                      medmnist_root=args.medmnist_root)
     print("\nDone.")
 
 
