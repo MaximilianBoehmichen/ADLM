@@ -9,6 +9,7 @@
 #SBATCH --mem=32G
 #SBATCH --qos=master-queuesave
 
+source /usr/share/modules/init/bash
 ml python/uv
 
 mkdir -p /vol/miltank/users/hdo/logs

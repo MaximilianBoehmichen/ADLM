@@ -3,6 +3,9 @@
 Usage:
     python train_gnn.py --dataset pneumoniamnist --epochs 50
     python train_gnn.py --dataset chestmnist --epochs 50 --batch-size 64
+
+    # Pixel point-cloud baseline (no Gaussians):
+    python train_gnn.py --dataset chestmnist --pixel-baseline --data-root data_pixel --in-dim 3 --epochs 100
 """
 from __future__ import annotations
 
@@ -30,6 +33,7 @@ if sys.platform == "darwin":
 
 import wandb
 from dataset.gaussian2D import Gaussian2DDataset
+from dataset.pixel_baseline import PixelBaselineDataset
 from dataset.transforms import encode_rotation, to_undirected_transform
 from model.gcn_classifier import ResGCNClassifier
 from training.metrics import EpochMetrics, run_medmnist_evaluator
@@ -64,6 +68,10 @@ def parse_args():
                    help="DropEdge probability during training (0 = disabled)")
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--layers", type=int, default=3)
+    p.add_argument("--in-dim", type=int, default=None,
+                   help="Override input feature dim (default: 7 for Gaussian, 3 for pixel baseline)")
+    p.add_argument("--pixel-baseline", action="store_true",
+                   help="Use pixel point-cloud dataset instead of Gaussian graphs")
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap dataset size (e.g. 32 to overfit a single batch)")
     p.add_argument("--in-memory", action="store_true",
@@ -160,16 +168,29 @@ def main():
     task = task_info["task"]
     num_classes = task_info["num_classes"]
 
-    transforms = Compose([encode_rotation, to_undirected_transform])
+    if args.pixel_baseline:
+        transforms = Compose([to_undirected_transform])
+    else:
+        transforms = Compose([encode_rotation, to_undirected_transform])
     data_root = Path(args.data_root) / args.dataset
 
+    DatasetClass = PixelBaselineDataset if args.pixel_baseline else Gaussian2DDataset
+
     t0 = time.perf_counter()
-    train_ds = Gaussian2DDataset(root=data_root, split="train",
-                                  transforms=transforms, in_memory=in_memory)
-    val_ds = Gaussian2DDataset(root=data_root, split="val",
+    if args.pixel_baseline:
+        train_ds = DatasetClass(root=data_root, split="train",
                                 transforms=transforms, in_memory=in_memory)
-    test_ds = Gaussian2DDataset(root=data_root, split="test",
-                                 transforms=transforms, in_memory=in_memory)
+        val_ds = DatasetClass(root=data_root, split="val",
+                              transforms=transforms, in_memory=in_memory)
+        test_ds = DatasetClass(root=data_root, split="test",
+                               transforms=transforms, in_memory=in_memory)
+    else:
+        train_ds = Gaussian2DDataset(root=data_root, split="train",
+                                     transforms=transforms, in_memory=in_memory)
+        val_ds = Gaussian2DDataset(root=data_root, split="val",
+                                   transforms=transforms, in_memory=in_memory)
+        test_ds = Gaussian2DDataset(root=data_root, split="test",
+                                    transforms=transforms, in_memory=in_memory)
     t_load = time.perf_counter() - t0
     print(f"Data loaded in {t_load:.1f}s "
           f"(train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}, "
@@ -186,7 +207,13 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResGCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
+    if args.in_dim is not None:
+        in_dim = args.in_dim
+    elif args.pixel_baseline:
+        in_dim = 3  # [row_norm, col_norm, intensity]
+    else:
+        in_dim = 7  # Gaussian: mus(2) + scalings(2) + cos/sin(2) + color(1)
+    model = ResGCNClassifier(in_dim=in_dim, hidden_dim=args.hidden, num_classes=num_classes,
                              num_layers=args.layers, task=task).to(device)
 
     pos_weight = None

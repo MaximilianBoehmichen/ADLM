@@ -1,0 +1,120 @@
+"""Pixel point-cloud baseline preprocessor.
+
+Converts MedMNIST images to PyG Data objects where each node is a sampled pixel:
+    x: (N, 3) — [row_norm, col_norm, intensity]  all in [0, 1]
+    pos: (N, 2) — [row_norm, col_norm]
+    edge_index: KNN graph on pixel positions
+    y: class label
+
+Usage:
+    python preprocess_pixel_baseline.py --dataset chestmnist --splits train val test
+    python preprocess_pixel_baseline.py --dataset chestmnist --splits train --max-samples 1000
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+import faiss
+import numpy as np
+import torch
+from torch_geometric.data import Data
+
+from optimize_static_repr_fast import (
+    load_medmnist_dataset,
+    preprocess_medmnist_image,
+)
+from preprocess_dataset import build_label_tensor
+
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+
+def image_to_pixel_graph(img: torch.Tensor, stride: int, k: int) -> Data:
+    """Convert a 2D image tensor to a pixel point-cloud PyG Data (no label).
+
+    Args:
+        img: (H, W) float32 tensor, values in [0, 1]
+        stride: sample every `stride` pixels in each dimension
+        k: KNN degree for graph edges
+    """
+    H, W = img.shape
+    rows = torch.arange(0, H, stride)
+    cols = torch.arange(0, W, stride)
+    grid_r, grid_c = torch.meshgrid(rows, cols, indexing="ij")
+    # (N, 2) pixel positions, normalized to [0, 1]
+    pos_raw = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=1).float()
+    pos = pos_raw / torch.tensor([H - 1, W - 1], dtype=torch.float32)
+
+    intensities = img[grid_r.flatten(), grid_c.flatten()].unsqueeze(1)  # (N, 1)
+    x = torch.cat([pos, intensities], dim=1)  # (N, 3)
+
+    N = pos.shape[0]
+    index = faiss.IndexFlatL2(2)
+    index.add(pos.numpy().astype(np.float32))
+    _, knn_idx = index.search(pos.numpy().astype(np.float32), k + 1)
+    knn_idx = knn_idx[:, 1:]  # remove self
+    src = np.repeat(np.arange(N), k)
+    dst = knn_idx.flatten()
+    edge_index = torch.tensor(np.stack([src, dst]), dtype=torch.long)
+
+    return Data(x=x, pos=pos, edge_index=edge_index)
+
+
+def process_split(dataset_flag: str, split: str, output_dir: Path,
+                  stride: int, k: int, max_samples: int | None = None):
+    dataset, info, D = load_medmnist_dataset(dataset_flag, split=split)
+    assert D == 2, "Only 2D datasets are supported."
+    task = info["task"]
+
+    split_dir = output_dir / dataset_flag / split
+    split_dir.mkdir(parents=True, exist_ok=True)
+
+    total = len(dataset)
+    end = total if max_samples is None else min(total, max_samples)
+
+    for i in range(end):
+        out_path = split_dir / f"{i:05d}.pt"
+        if out_path.exists():
+            continue
+
+        img_pil, label_np = dataset[i]
+        y = build_label_tensor(label_np, task)
+        img = preprocess_medmnist_image(img_pil, D)  # (H, W) in [0,1]
+
+        graph = image_to_pixel_graph(img, stride=stride, k=k)
+        graph.y = y
+        torch.save(graph, out_path)
+
+        if (i + 1) % 500 == 0 or i == 0:
+            print(f"[{split}] {i + 1}/{end} — nodes: {graph.x.shape[0]}")
+
+    print(f"[{split}] done — {end} samples in {split_dir}")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--dataset", default="chestmnist",
+                   choices=["pneumoniamnist", "chestmnist"])
+    p.add_argument("--splits", nargs="+", default=["train", "val", "test"])
+    p.add_argument("--output-dir", default="data_pixel")
+    p.add_argument("--stride", type=int, default=7,
+                   help="Pixel sampling stride (stride=7 → 1024 nodes for 224×224)")
+    p.add_argument("--k-graph", type=int, default=15)
+    p.add_argument("--max-samples", type=int, default=None,
+                   help="Cap per-split sample count")
+    args = p.parse_args()
+
+    output_dir = Path(args.output_dir)
+    for split in args.splits:
+        print(f"\n--- {args.dataset} [{split}] ---")
+        process_split(args.dataset, split, output_dir,
+                      stride=args.stride, k=args.k_graph,
+                      max_samples=args.max_samples)
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
