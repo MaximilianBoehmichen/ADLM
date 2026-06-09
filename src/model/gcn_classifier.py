@@ -15,6 +15,36 @@ from torch_geometric.nn import GCNConv, MessagePassing, global_mean_pool, global
 
 
 # ---------------------------------------------------------------------------
+# Level -1: Linear baseline (replicates sklearn logistic regression)
+# ---------------------------------------------------------------------------
+
+class LinearBaseline(nn.Module):
+    """Pool raw features with mean/max/std/min, then linear head. No learned
+    projection before pooling — matches the sklearn logistic regression baseline."""
+
+    def __init__(self, in_dim: int = 7, hidden_dim: int = 64,
+                 num_classes: int = 2, num_layers: int = 0,
+                 dropout_p: float = 0.3, task: str = "multi-class", **kwargs):
+        super().__init__()
+        self.task = task
+        self.head = Linear(in_dim * 4, num_classes)
+
+    def forward(self, data) -> torch.Tensor:
+        x, batch = data.x, data.batch
+        mean = global_mean_pool(x, batch)
+        max_ = global_max_pool(x, batch)
+        min_ = -global_max_pool(-x, batch)
+        mean_sq = global_mean_pool(x ** 2, batch)
+        std = (mean_sq - mean ** 2).clamp(min=1e-6).sqrt()
+        x = torch.cat([mean, std, min_, max_], dim=1)
+        return self.head(x)
+
+    @property
+    def num_layers(self) -> int:
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Level 0: MLP baseline (no graph structure)
 # ---------------------------------------------------------------------------
 
