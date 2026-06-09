@@ -19,5 +19,5 @@ uv run python preprocess_pixel_baseline.py \
     --dataset chestmnist \
     --splits train val test \
     --output-dir /vol/miltank/users/hdo/data_pixel \
-    --stride 7 \
-    --k-graph 15
+    --k-graph 8 \
+    --max-samples 1000

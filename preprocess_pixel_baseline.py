@@ -1,14 +1,16 @@
 """Pixel point-cloud baseline preprocessor.
 
-Converts MedMNIST images to PyG Data objects where each node is a sampled pixel:
-    x: (N, 3) — [row_norm, col_norm, intensity]  all in [0, 1]
-    pos: (N, 2) — [row_norm, col_norm]
+Loads MedMNIST images at native 28×28 resolution (784 nodes per image).
+Every pixel becomes a node — no subsampling, no information loss.
+
+    x: (784, 3) — [row_norm, col_norm, intensity]  all in [0, 1]
+    pos: (784, 2) — [row_norm, col_norm]
     edge_index: KNN graph on pixel positions
     y: class label
 
 Usage:
     python preprocess_pixel_baseline.py --dataset chestmnist --splits train val test
-    python preprocess_pixel_baseline.py --dataset chestmnist --splits train --max-samples 1000
+    python preprocess_pixel_baseline.py --dataset chestmnist --splits train val test --max-samples 1000
 """
 
 import argparse
@@ -31,31 +33,30 @@ if sys.platform == "darwin":
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
+IMG_SIZE = 28
 
-def image_to_pixel_graph(img: torch.Tensor, stride: int, k: int) -> Data:
-    """Convert a 2D image tensor to a pixel point-cloud PyG Data (no label).
 
-    Args:
-        img: (H, W) float32 tensor, values in [0, 1]
-        stride: sample every `stride` pixels in each dimension
-        k: KNN degree for graph edges
+def image_to_pixel_graph(img: torch.Tensor, k: int) -> Data:
+    """Convert a 2D (H, W) image tensor to a pixel point-cloud PyG Data.
+
+    Every pixel is a node. Positions normalized to [0, 1].
     """
     H, W = img.shape
-    rows = torch.arange(0, H, stride)
-    cols = torch.arange(0, W, stride)
+    rows = torch.arange(H)
+    cols = torch.arange(W)
     grid_r, grid_c = torch.meshgrid(rows, cols, indexing="ij")
-    # (N, 2) pixel positions, normalized to [0, 1]
-    pos_raw = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=1).float()
-    pos = pos_raw / torch.tensor([H - 1, W - 1], dtype=torch.float32)
 
-    intensities = img[grid_r.flatten(), grid_c.flatten()].unsqueeze(1)  # (N, 1)
+    pos = torch.stack([grid_r.flatten(), grid_c.flatten()], dim=1).float()
+    pos = pos / torch.tensor([H - 1, W - 1], dtype=torch.float32)  # (N, 2) in [0,1]
+
+    intensities = img.flatten().unsqueeze(1)  # (N, 1)
     x = torch.cat([pos, intensities], dim=1)  # (N, 3)
 
     N = pos.shape[0]
     index = faiss.IndexFlatL2(2)
     index.add(pos.numpy().astype(np.float32))
     _, knn_idx = index.search(pos.numpy().astype(np.float32), k + 1)
-    knn_idx = knn_idx[:, 1:]  # remove self
+    knn_idx = knn_idx[:, 1:]  # remove self-loop
     src = np.repeat(np.arange(N), k)
     dst = knn_idx.flatten()
     edge_index = torch.tensor(np.stack([src, dst]), dtype=torch.long)
@@ -64,8 +65,8 @@ def image_to_pixel_graph(img: torch.Tensor, stride: int, k: int) -> Data:
 
 
 def process_split(dataset_flag: str, split: str, output_dir: Path,
-                  stride: int, k: int, max_samples: int | None = None):
-    dataset, info, D = load_medmnist_dataset(dataset_flag, split=split)
+                  k: int, max_samples: int | None = None):
+    dataset, info, D = load_medmnist_dataset(dataset_flag, split=split, size=IMG_SIZE)
     assert D == 2, "Only 2D datasets are supported."
     task = info["task"]
 
@@ -82,9 +83,9 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
 
         img_pil, label_np = dataset[i]
         y = build_label_tensor(label_np, task)
-        img = preprocess_medmnist_image(img_pil, D)  # (H, W) in [0,1]
+        img = preprocess_medmnist_image(img_pil, D)  # (28, 28) in [0, 1]
 
-        graph = image_to_pixel_graph(img, stride=stride, k=k)
+        graph = image_to_pixel_graph(img, k=k)
         graph.y = y
         torch.save(graph, out_path)
 
@@ -100,19 +101,17 @@ def main():
                    choices=["pneumoniamnist", "chestmnist"])
     p.add_argument("--splits", nargs="+", default=["train", "val", "test"])
     p.add_argument("--output-dir", default="data_pixel")
-    p.add_argument("--stride", type=int, default=7,
-                   help="Pixel sampling stride (stride=7 → 1024 nodes for 224×224)")
-    p.add_argument("--k-graph", type=int, default=15)
+    p.add_argument("--k-graph", type=int, default=8,
+                   help="KNN degree (default 8 — each pixel connects to its 8 spatial neighbours)")
     p.add_argument("--max-samples", type=int, default=None,
-                   help="Cap per-split sample count")
+                   help="Cap per-split sample count (e.g. 1000 for a quick signal run)")
     args = p.parse_args()
 
     output_dir = Path(args.output_dir)
     for split in args.splits:
-        print(f"\n--- {args.dataset} [{split}] ---")
+        print(f"\n--- {args.dataset} [{split}] (28×28, {IMG_SIZE*IMG_SIZE} nodes) ---")
         process_split(args.dataset, split, output_dir,
-                      stride=args.stride, k=args.k_graph,
-                      max_samples=args.max_samples)
+                      k=args.k_graph, max_samples=args.max_samples)
     print("\nDone.")
 
 
