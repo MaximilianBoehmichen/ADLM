@@ -82,6 +82,8 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
                   start_idx: int = 0, end_idx: int = None,
                   medmnist_root: str | None = None):
     """Process all images in one MedMNIST split."""
+    if medmnist_root is not None:
+        Path(medmnist_root).mkdir(parents=True, exist_ok=True)
     dataset, info, D = load_medmnist_dataset(dataset_flag, split=split, root=medmnist_root)
     assert D == 2, "Only 2D datasets are supported for now."
     task = info["task"]

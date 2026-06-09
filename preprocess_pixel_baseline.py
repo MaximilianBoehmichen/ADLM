@@ -66,6 +66,8 @@ def image_to_pixel_graph(img: torch.Tensor, k: int) -> Data:
 
 def process_split(dataset_flag: str, split: str, output_dir: Path,
                   k: int, max_samples: int | None = None, medmnist_root: str | None = None):
+    if medmnist_root is not None:
+        Path(medmnist_root).mkdir(parents=True, exist_ok=True)
     dataset, info, D = load_medmnist_dataset(dataset_flag, split=split, size=IMG_SIZE,
                                              root=medmnist_root)
     assert D == 2, "Only 2D datasets are supported."
