@@ -10,7 +10,8 @@ Every pixel becomes a node — no subsampling, no information loss.
 
 Usage:
     python preprocess_pixel_baseline.py --dataset chestmnist --splits train val test
-    python preprocess_pixel_baseline.py --dataset chestmnist --splits train val test --max-samples 1000
+    python preprocess_pixel_baseline.py --dataset organcmnist --splits train val test
+    python preprocess_pixel_baseline.py --dataset organcmnist --splits train val test --max-samples 1000
 """
 
 import argparse
@@ -100,8 +101,7 @@ def process_split(dataset_flag: str, split: str, output_dir: Path,
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", default="chestmnist",
-                   choices=["pneumoniamnist", "chestmnist"])
+    p.add_argument("--dataset", default="chestmnist")
     p.add_argument("--splits", nargs="+", default=["train", "val", "test"])
     p.add_argument("--output-dir", default="data_pixel")
     p.add_argument("--k-graph", type=int, default=8,

@@ -1,8 +1,9 @@
 """GNN classifier training entrypoint.
 
 Usage:
-    python train_gnn.py --dataset pneumoniamnist --epochs 50
+    python train_gnn.py --dataset pneumoniamnist --epochs 50 --in-memory
     python train_gnn.py --dataset chestmnist --epochs 50 --batch-size 64
+    python train_gnn.py --dataset pathmnist --epochs 50 --batch-size 64
 
     # Pixel point-cloud baseline (no Gaussians):
     python train_gnn.py --dataset chestmnist --pixel-baseline --data-root data_pixel --in-dim 3 --epochs 100
@@ -55,8 +56,7 @@ def set_seed(seed: int):
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train GCN classifier on Gaussian graphs.")
-    p.add_argument("--dataset", default="pneumoniamnist",
-                   choices=["pneumoniamnist", "chestmnist"])
+    p.add_argument("--dataset", default="pneumoniamnist")
     p.add_argument("--data-root", default="data",
                    help="Parent dir containing {dataset}/{split}/*.pt")
     p.add_argument("--epochs", type=int, default=50)
@@ -156,7 +156,7 @@ def main():
 
     if args.num_workers is None:
         args.num_workers = 0 if sys.platform == "darwin" else 4
-    in_memory = args.in_memory or (args.dataset == "pneumoniamnist")
+    in_memory = args.in_memory
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
