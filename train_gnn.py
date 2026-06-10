@@ -15,9 +15,12 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader
+from torch_geometric.nn import summary
 from torch_geometric.transforms import Compose
 from torch_geometric.utils import dropout_edge
+from tqdm import tqdm
 
 ROOT = Path(__file__).parent
 SRC = ROOT / "src"
@@ -33,9 +36,8 @@ from dataset.gaussian2D import Gaussian2DDataset
 from dataset.transforms import (
     FeatureNormalization,
     encode_rotation,
-    to_undirected_transform,
 )
-from model.gcn_classifier import ResGCNClassifier
+from model.gnn_other import ResNetLikeGNN
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
@@ -95,7 +97,8 @@ def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics
     n_batches = 0
     t_data, t_step = 0.0, 0.0
     t0 = time.perf_counter()
-    for batch in loader:
+    pbar = tqdm(loader, desc="train", leave=False)
+    for batch in pbar:
         t_data += time.perf_counter() - t0
         t0_step = time.perf_counter()
         batch = batch.to(device)
@@ -116,6 +119,7 @@ def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics
         loss.backward()
         optim.step()
         metrics.update(logits, targets, loss=loss.item())
+        pbar.set_postfix(loss=f"{loss.item():.4f}")
         t_step += time.perf_counter() - t0_step
         n_batches += 1
         t0 = time.perf_counter()
@@ -168,7 +172,7 @@ def main():
     task = task_info["task"]
     num_classes = task_info["num_classes"]
 
-    transforms = Compose([encode_rotation, to_undirected_transform])
+    transforms = Compose([encode_rotation])
     data_root = Path(args.data_root) / args.dataset
 
     t0 = time.perf_counter()
@@ -216,9 +220,21 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResGCNClassifier(in_dim=7, hidden_dim=args.hidden, num_classes=num_classes,
-                             num_layers=args.layers, task=task,
-                             dropout_p=args.dropout).to(device)
+    model = ResNetLikeGNN(in_channels=7, num_classes=num_classes).to(device)
+
+    N, K = 836, 9
+    src = torch.arange(N, device=device).repeat_interleave(K)
+    dst = torch.randint(0, N, (N * K,), device=device)
+    sample = Batch.from_data_list([
+        Data(
+            x=torch.randn(N, expected_in_dim, device=device),
+            pos=torch.rand(N, 2, device=device),
+            edge_index=torch.stack([src, dst]),
+            y=torch.tensor([0], device=device),
+        )
+    ])
+
+    print(summary(model, sample))
 
     pos_weight = None
     if task == "multi-label, binary-class":
