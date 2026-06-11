@@ -1,45 +1,51 @@
-"""ResNet-inspired GCN graph classifier."""
+"""ResNet-inspired graph classifier with relative-position message passing."""
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch.nn import LayerNorm, Linear, ReLU, Sequential
+from torch_geometric.nn import MessagePassing, global_mean_pool
 
 
-class ResGCNBlock(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.conv = GCNConv(dim, dim, bias=False)
-        self.bn = nn.BatchNorm1d(dim)
+class RelativeResNetBlock(MessagePassing):
+    def __init__(self, channels: int, pos_dim: int = 2):
+        super().__init__(aggr='mean')
+        self.message_mlp = Sequential(
+            Linear(channels + pos_dim, channels),
+            ReLU(),
+            Linear(channels, channels),
+            LayerNorm(channels),
+        )
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        return F.relu(self.bn(self.conv(x, edge_index)) + x)
+    def forward(self, x: torch.Tensor, pos: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        aggr_out = self.propagate(edge_index, x=x, pos=pos)
+        return F.relu(x + aggr_out)
+
+    def message(self, x_j: torch.Tensor, pos_i: torch.Tensor, pos_j: torch.Tensor) -> torch.Tensor:
+        return self.message_mlp(torch.cat([x_j, pos_j - pos_i], dim=-1))
 
 
 class ResGCNClassifier(nn.Module):
     def __init__(self, in_dim: int = 7, hidden_dim: int = 64,
                  num_classes: int = 2, num_layers: int = 3,
-                 task: str = "multi-class"):
+                 task: str = "multi-class", pos_dim: int = 2):
         super().__init__()
         self.task = task
-        # Input projection: node features → hidden space (like ResNet's initial conv)
         self.input_proj = nn.Sequential(
             nn.Linear(in_dim, hidden_dim, bias=False),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
         )
-        # Residual blocks (GCNConv → BN → skip → ReLU)
         self.blocks = nn.ModuleList(
-            [ResGCNBlock(hidden_dim) for _ in range(num_layers)]
+            [RelativeResNetBlock(hidden_dim, pos_dim) for _ in range(num_layers)]
         )
-        # Classifier head (global avg pool + FC, like ResNet)
         self.head = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, data) -> torch.Tensor:
-        x, edge_index, batch = data.x, data.edge_index, data.batch
+        x, edge_index, batch, pos = data.x, data.edge_index, data.batch, data.pos
         x = self.input_proj(x)
         for block in self.blocks:
-            x = block(x, edge_index)
+            x = block(x, pos, edge_index)
         x = global_mean_pool(x, batch)
         return self.head(x)
