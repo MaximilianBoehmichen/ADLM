@@ -57,12 +57,12 @@ def set_seed(seed: int):
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train GCN classifier on Gaussian graphs.")
-    p.add_argument("--dataset", default="pneumoniamnist",
-                   choices=["pneumoniamnist", "chestmnist"])
+    p.add_argument("--dataset", default="chestmnist",
+                   choices=["pneumoniamnist", "chestmnist", "chestmnistNEW"])
     p.add_argument("--data-root", default="data",
                    help="Parent dir containing {dataset}/{split}/*.pt")
     p.add_argument("--epochs", type=int, default=50)
-    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-3,
                    help="AdamW weight decay (L2 regularization)")
@@ -88,7 +88,7 @@ def parse_args():
 
 def make_loader(ds, batch_size, shuffle, num_workers):
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle,
-                      num_workers=num_workers)
+                      num_workers=num_workers, persistent_workers=True)
 
 
 def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics,
