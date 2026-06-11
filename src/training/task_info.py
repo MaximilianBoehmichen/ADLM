@@ -22,12 +22,7 @@ def build_loss(task: str, pos_weight: torch.Tensor | None,
                device: torch.device) -> nn.Module:
     """Build the appropriate loss module for the given task."""
     if task == "multi-label, binary-class":
-        if pos_weight is None:
-            raise ValueError(
-                "pos_weight is required for multi-label BCE loss. "
-                "Use compute_or_load_pos_weight() to produce it."
-            )
-        return nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
+        return nn.BCEWithLogitsLoss()
     return nn.CrossEntropyLoss()
 
 
