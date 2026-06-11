@@ -13,7 +13,7 @@ resolution-markers = [
 [[package]]
 name = "adlm"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "faiss-cpu", marker = "sys_platform == 'darwin'" },
     { name = "faiss-gpu-cu12", marker = "sys_platform != 'darwin'" },
@@ -22,6 +22,7 @@ dependencies = [
     { name = "medmnist" },
     { name = "numpy" },
     { name = "scikit-learn" },
+    { name = "setuptools" },
     { name = "torch" },
     { name = "torch-geometric" },
     { name = "torchinfo" },
@@ -39,6 +40,7 @@ requires-dist = [
     { name = "medmnist", specifier = ">=3.0.2" },
     { name = "numpy", specifier = ">=2.4.4" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
+    { name = "setuptools", specifier = ">=81.0.0" },
     { name = "torch", specifier = ">=2.11.0" },
     { name = "torch-geometric", specifier = ">=2.7.0" },
     { name = "torchinfo", specifier = ">=1.8.0" },
