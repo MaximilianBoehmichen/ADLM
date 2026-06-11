@@ -39,7 +39,6 @@ from model.gcn_classifier import ResGCNClassifier
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
-    compute_or_load_pos_weight,
     get_task_info,
     predict_scores,
 )
@@ -220,14 +219,7 @@ def main():
                              num_layers=args.layers, task=task,
                              dropout_p=args.dropout).to(device)
 
-    pos_weight = None
-    if task == "multi-label, binary-class":
-        cache_path = ROOT / "cache" / args.dataset / "pos_weight.pt"
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        pos_weight = compute_or_load_pos_weight(train_ds, num_labels=num_classes,
-                                                 cache_path=cache_path)
-
-    loss_fn = build_loss(task, pos_weight, device)
+    loss_fn = build_loss(task, None, device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.lr,
                               weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
