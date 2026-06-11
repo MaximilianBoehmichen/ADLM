@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import torch
+from torch.utils.data import Dataset
 from torch_geometric.data import Data
+from torch_geometric.utils import to_undirected
 
 
 def pos_normalization(
@@ -63,4 +67,55 @@ def basic_edge_attr(data: Data) -> Data:
     row, col = data.edge_index
     data.edge_attr = pos[row] - pos[col]
 
+    return data
+
+
+class FeatureNormalization:
+    """Per-feature z-score standardization using precomputed training set statistics.
+
+    Normalizes x columns to zero-mean unit-variance. Compute stats from the
+    training set only, then apply to train/val/test with the same parameters.
+    Must run after drop_pos_from_x so it only sees the 5 non-position features.
+    """
+
+    def __init__(self, mean: torch.Tensor, std: torch.Tensor) -> None:
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, data: Data) -> Data:
+        data.x = (data.x - self.mean) / self.std
+        return data
+
+    @staticmethod
+    def compute_stats(dataset: Dataset) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute per-feature mean and std over all nodes in the dataset."""
+        all_x = [dataset[i].x for i in range(len(dataset))]
+        x = torch.cat(all_x, dim=0)
+        mean = x.mean(dim=0)
+        std = x.std(dim=0).clamp(min=1e-6)
+        return mean, std
+
+
+def drop_pos_from_x(data: Data) -> Data:
+    """Remove absolute positions (x[:, :2]) from node features.
+
+    Spatial information is instead captured via relative edge attributes
+    (basic_edge_attr). Must run after encode_rotation and basic_edge_attr.
+    """
+    data.x = data.x[:, 2:]
+    return data
+
+
+def to_undirected_transform(data: Data) -> Data:
+    """Symmetrize edge_index in place. Required for GCNConv on directed KNN graphs.
+
+    Why:
+        preprocess_dataset.py builds k directed edges per node (i -> j for each
+        of i's k nearest neighbors), so in-degree varies wildly while out-degree
+        is fixed at k. GCNConv assumes an undirected graph; passing a directed
+        one breaks the symmetric Laplacian normalization.
+    """
+    edge_index = data.edge_index
+    assert edge_index is not None
+    data.edge_index = to_undirected(edge_index, num_nodes=data.num_nodes)
     return data
