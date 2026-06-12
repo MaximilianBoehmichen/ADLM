@@ -216,6 +216,13 @@ def main():
     model = ResGCNClassifier(in_dim=in_dim, hidden_dim=args.hidden, num_classes=num_classes,
                              num_layers=args.layers, task=task).to(device)
 
+    wandb.config.update({
+        "total_params":     sum(p.numel() for p in model.parameters()),
+        "trainable_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
+        "model_str":        str(model),
+    })
+    wandb.watch(model, log="all", log_freq=100)
+
     pos_weight = None
     if task == "multi-label, binary-class":
         cache_path = ROOT / "cache" / args.dataset / "pos_weight.pt"

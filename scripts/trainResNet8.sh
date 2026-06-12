@@ -17,13 +17,12 @@ mkdir -p /vol/miltank/users/hdo/logs
 cd /vol/miltank/users/hdo/ADLM
 
 uv run python train_gnn.py \
-    --dataset chestmnist \
+    --dataset organcmnist \
     --data-root /vol/miltank/users/hdo/data \
-    --epochs 50 \
+    --epochs 100 \
     --batch-size 256 \
     --num-workers 4 \
     --layers 6 \
     --hidden 112 \
-    --weight-decay 1e-4 \
-    --max-samples 10000
+    --max-samples 5000
     
