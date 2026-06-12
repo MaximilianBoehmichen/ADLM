@@ -30,23 +30,25 @@ def pos_normalization(
 
 
 def encode_rotation(data: Data) -> Data:
-    """Encodes the theta to two params.
+    """Encodes the theta to two params and strips absolute positions from x.
 
     Modifies in place. Assumes data is already cloned.
+
+    Input x layout:  [mus(2) | scalings(2) | theta(1) | color(1)]  → 6 dims
+    Output x layout: [scalings(2) | cos(2θ)(1) | sin(2θ)(1) | color(1)] → 5 dims
+
+    Absolute positions are kept in data.pos for relative message passing (pos_j - pos_i)
+    but removed from x so the classifier is position-invariant.
     """
-    # I first wanted to just cap the theta between 0 and 2pi, but theoretically 0-pi also loses no information.
-    # However, after some research, this still has the problem that both ends encode roughly the same, but an MLP
-    # will likely not get that concept. But by encoding theta as cos(2 * theta) and sin(2 * theta), the distance between
-    # the theta->0 and theta->pi vector is small.
-    # However, this doesn't solve the problem of pi/2 and x-y interchangeability.
     x = data.x
     assert x is not None
 
     theta = x[:, 4:5]
-    cos_t = torch.cos(2 * theta)  # treat theta, theta + pi, and theta + 2pi as the same ellipsis, because they are.
+    cos_t = torch.cos(2 * theta)  # theta, theta+pi, theta+2pi are the same ellipse
     sin_t = torch.sin(2 * theta)
 
-    data.x = torch.cat([x[:, :4], cos_t, sin_t, x[:, 5:]], dim=1)
+    # strip mus (x[:, :2]), keep scalings, cos/sin rotation, color
+    data.x = torch.cat([x[:, 2:4], cos_t, sin_t, x[:, 5:]], dim=1)
     return data
 
 

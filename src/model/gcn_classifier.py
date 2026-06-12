@@ -34,7 +34,7 @@ class ResGCNClassifier(nn.Module):
         self.task = task
         self.input_proj = nn.Sequential(
             nn.Linear(in_dim, hidden_dim, bias=False),
-            nn.BatchNorm1d(hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
         )
         self.blocks = nn.ModuleList(

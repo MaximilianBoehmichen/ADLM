@@ -23,6 +23,6 @@ uv run python train_gnn.py \
     --batch-size 256 \
     --num-workers 4 \
     --layers 6 \
-    --hidden 112 \
+    --hidden 78 \
     --max-samples 5000
     

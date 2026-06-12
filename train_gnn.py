@@ -212,7 +212,7 @@ def main():
     elif args.pixel_baseline:
         in_dim = 3  # [row_norm, col_norm, intensity]
     else:
-        in_dim = 7  # Gaussian: mus(2) + scalings(2) + cos/sin(2) + color(1)
+        in_dim = 5  # Gaussian: scalings(2) + cos/sin(2) + color(1); abs pos stripped, kept in data.pos
     model = ResGCNClassifier(in_dim=in_dim, hidden_dim=args.hidden, num_classes=num_classes,
                              num_layers=args.layers, task=task).to(device)
 
