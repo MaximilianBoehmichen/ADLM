@@ -60,7 +60,6 @@ class KNNConv(nn.Module):
         self.k = k
         self.linear = nn.Linear(in_channels, out_channels, bias=False)
 
-
     def forward(self, data: Data) -> Data:
         x, edge_index = data.x, data.edge_index
         assert x is not None
@@ -72,6 +71,7 @@ class KNNConv(nn.Module):
         data.x = self.linear(concatenated.sum(dim=1))
 
         return data
+
 
 class ResNetStem(nn.Module):
     """ResNet like stem."""

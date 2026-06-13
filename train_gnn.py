@@ -22,6 +22,8 @@ from torch_geometric.transforms import Compose
 from torch_geometric.utils import dropout_edge
 from tqdm import tqdm
 
+from model.gnn_another import ResNetLikePYGGNN
+
 ROOT = Path(__file__).parent
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -66,7 +68,7 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-3,
                    help="AdamW weight decay (L2 regularization)")
-    p.add_argument("--dropout", type=float, default=0.3,
+    p.add_argument("--dropout", type=float, default=0.0,
                    help="Node feature dropout probability after each block")
     p.add_argument("--drop-edge", type=float, default=0.0,
                    help="DropEdge probability during training (0 = disabled)")
@@ -220,9 +222,9 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResNetLikeGNN(in_channels=7, num_classes=num_classes).to(device)
+    model = ResNetLikePYGGNN(in_channels=7, num_classes=num_classes).to(device)
 
-    N, K = 836, 9
+    N, K = 836, 15
     src = torch.arange(N, device=device).repeat_interleave(K)
     dst = torch.randint(0, N, (N * K,), device=device)
     sample = Batch.from_data_list([
