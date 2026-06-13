@@ -176,6 +176,11 @@ def build_dataloaders(config: Config) -> tuple[Loaders, NormalizationStats]:
     Returns:
         A :class:`Loaders` triplet (train/val/test).
     """
+    if config.gaussian_root is not None:
+        from baseline.gaussian import build_gaussian_loaders
+
+        return build_gaussian_loaders(config)
+
     info = dataset_info(config.dataset)
     data_root = config.output_dir / "medmnist_cache"
     data_root.mkdir(parents=True, exist_ok=True)

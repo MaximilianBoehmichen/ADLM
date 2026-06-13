@@ -26,6 +26,9 @@ class Config:
     seed: int
     device: torch.device
     num_workers: int
+    gaussian_root: Path | None = None
+    gaussian_k: int = 15
+    gaussian_cache: bool = False
     run_name: str = field(
         default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S")
     )
@@ -96,6 +99,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--accum-batch-size", type=int, default=128)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument(
+        "--gaussian-root",
+        type=Path,
+        default=None,
+        help="Dir holding {split}/*.pt Gaussian graphs. When set, the model "
+        "trains on rendered graphs instead of the raw images.",
+    )
+    parser.add_argument(
+        "--gaussian-k",
+        type=int,
+        default=15,
+        help="Nearest Gaussians blended per pixel when rendering.",
+    )
+    parser.add_argument(
+        "--gaussian-cache",
+        action="store_true",
+        help="Cache each rendered image in memory as uint8 after first access "
+        "(per-worker; peak memory scales with --num-workers).",
+    )
     parser.add_argument("--seed", type=int, default=848577)
     parser.add_argument(
         "--num-workers",
@@ -152,6 +174,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
         output_dir=args.output_dir,
         seed=args.seed,
         num_workers=args.num_workers,
+        gaussian_root=args.gaussian_root,
+        gaussian_k=args.gaussian_k,
+        gaussian_cache=args.gaussian_cache,
         run_name=run_name,
         wandb=args.wandb,
         wandb_project=args.wandb_project,
