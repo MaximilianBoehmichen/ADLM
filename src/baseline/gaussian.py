@@ -202,6 +202,7 @@ def _render_stats(
         shuffle=True,
         num_workers=num_workers,
         worker_init_fn=_init_worker,
+        multiprocessing_context="spawn" if num_workers > 0 else None,
     )
 
     total = torch.zeros(1)
@@ -278,6 +279,9 @@ def build_gaussian_loaders(config: Config) -> tuple[Loaders, NormalizationStats]
         "num_workers": config.num_workers,
         "prefetch_factor": 2 if config.num_workers > 0 else None,
         "worker_init_fn": _init_worker,
+        # Workers start after wandb.init() (and CUDA on GPU) spin up threads in
+        # the main process; forking would inherit their locks and deadlock.
+        "multiprocessing_context": "spawn" if config.num_workers > 0 else None,
     }
 
     loaders = Loaders(
