@@ -22,7 +22,6 @@ from torch_geometric.transforms import Compose
 from torch_geometric.utils import dropout_edge
 from tqdm import tqdm
 
-from model.gnn_another import ResNetLikePYGGNN
 
 ROOT = Path(__file__).parent
 SRC = ROOT / "src"
@@ -39,7 +38,7 @@ from dataset.transforms import (
     FeatureNormalization,
     encode_rotation,
 )
-from model.gnn_other import ResNetLikeGNN
+from model.gnn_another import ResNetLikePYGGNN
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
