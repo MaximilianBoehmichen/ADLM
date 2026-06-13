@@ -76,7 +76,7 @@ class ResNetBasicBlock(nn.Module):
 
 
 class ResNetLikePYGGNN(nn.Module):
-    CHANNELS = [16, 32, 64]
+    CHANNELS = [16, 32, 64, 128]
 
     def __init__(self, in_channels: int, num_classes: int, k: int = 9) -> None:
         super().__init__()
@@ -89,6 +89,7 @@ class ResNetLikePYGGNN(nn.Module):
             ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0]),
             ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[1]),
             ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2]),
+            ResNetBasicBlock(self.CHANNELS[2], self.CHANNELS[3]),
         ])
 
         self.head = nn.Linear(self.CHANNELS[-1], num_classes)
