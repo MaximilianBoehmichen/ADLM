@@ -172,6 +172,7 @@ def main():
     task_info = get_task_info(args.dataset)
     task = task_info["task"]
     num_classes = task_info["num_classes"]
+    class_names = task_info["class_names"]
 
     transforms = Compose([encode_rotation])
     data_root = Path(args.data_root) / args.dataset
@@ -264,8 +265,13 @@ def main():
 
         train_out = tm.compute()
         val_out = vm.compute()
+        train_out.pop("auroc_per_class", None)
+        val_per_class = val_out.pop("auroc_per_class", None)
         log = {f"train/{k}": v for k, v in train_out.items()}
         log.update({f"val/{k}": v for k, v in val_out.items()})
+        if val_per_class is not None:
+            for name, auc in zip(class_names, val_per_class):
+                log[f"val_auc/{name}"] = auc
         sched.step()
         log["epoch"] = epoch
         log["lr"] = sched.get_last_lr()[0]
@@ -280,21 +286,30 @@ def main():
               f"val loss {val_out['loss']:.4f} auc {val_out['auroc']:.4f} | "
               f"{t_train + t_val:.1f}s")
 
-    # Final headline test metric via official MedMNIST Evaluator. Evaluator
-    # asserts y_score.shape[0] == full official split size; partial preprocessing
-    # (smoke runs over a subset) trips it, so fall back to torchmetrics in that case.
+    # Final test metrics. Overall AUC/ACC via the official MedMNIST Evaluator;
+    # per-class AUC via torchmetrics (the Evaluator returns only the macro mean).
+    # The Evaluator asserts y_score.shape[0] == full official split size; partial
+    # preprocessing (smoke runs over a subset) trips it, so fall back in that case.
+    test_metrics = EpochMetrics(task, num_classes, device)
+    evaluate(model, test_loader, loss_fn, device, test_metrics, task)
+    test_out = test_metrics.compute()
+    test_per_class = test_out.pop("auroc_per_class", None)
+
+    test_log = {}
+    if test_per_class is not None:
+        for name, auc in zip(class_names, test_per_class):
+            test_log[f"test_auc/{name}"] = auc
+
     scores = collect_scores(model, test_loader, device, task)
     try:
         test_eval = run_medmnist_evaluator(scores, args.dataset, "test")
-        wandb.log({"test/auc": test_eval["AUC"], "test/acc": test_eval["ACC"]})
+        test_log.update({"test/auc": test_eval["AUC"], "test/acc": test_eval["ACC"]})
         print(f"TEST | AUC {test_eval['AUC']:.4f} | ACC {test_eval['ACC']:.4f}")
     except Exception:
-        tm = EpochMetrics(task, num_classes, device)
-        evaluate(model, test_loader, loss_fn, device, tm, task)
-        test_out = tm.compute()
-        wandb.log({"test/auroc": test_out["auroc"], "test/accuracy": test_out["accuracy"]})
+        test_log.update({"test/auroc": test_out["auroc"], "test/accuracy": test_out["accuracy"]})
         print(f"TEST (partial split, torchmetrics fallback) | "
               f"AUROC {test_out['auroc']:.4f} | ACC {test_out['accuracy']:.4f}")
+    wandb.log(test_log)
 
     wandb.finish()
 

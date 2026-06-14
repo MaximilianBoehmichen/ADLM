@@ -19,8 +19,10 @@ class EpochMetrics:
     def __init__(self, task: str, num_classes: int, device: torch.device):
         self.task = task
         self.device = device
+        self.auroc_per_class = None
         if task == "multi-label, binary-class":
             self.auroc = MultilabelAUROC(num_labels=num_classes, average="macro").to(device)
+            self.auroc_per_class = MultilabelAUROC(num_labels=num_classes, average=None).to(device)
             self.acc = MultilabelAccuracy(num_labels=num_classes, average="macro").to(device)
         elif task == "binary-class":
             self.auroc = BinaryAUROC().to(device)
@@ -39,6 +41,7 @@ class EpochMetrics:
             self.acc.update(pos_prob, targets.to(self.device).long())
         elif self.task == "multi-label, binary-class":
             self.auroc.update(scores, targets.to(self.device).int())
+            self.auroc_per_class.update(scores, targets.to(self.device).int())
             self.acc.update(scores, targets.to(self.device).int())
         else:
             self.auroc.update(scores, targets.to(self.device).long())
@@ -47,11 +50,14 @@ class EpochMetrics:
         self._loss_count += 1
 
     def compute(self) -> dict:
-        return {
+        out = {
             "loss": self._loss_sum / max(self._loss_count, 1),
             "auroc": float(self.auroc.compute()),
             "accuracy": float(self.acc.compute()),
         }
+        if self.auroc_per_class is not None:
+            out["auroc_per_class"] = self.auroc_per_class.compute().tolist()
+        return out
 
 
 def run_medmnist_evaluator(all_scores: torch.Tensor, dataset_flag: str,

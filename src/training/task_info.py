@@ -10,12 +10,14 @@ from medmnist import INFO
 
 
 def get_task_info(dataset_flag: str) -> dict:
-    """Return {'task', 'num_classes', 'loss_kind'} for a MedMNIST dataset."""
+    """Return {'task', 'num_classes', 'class_names', 'loss_kind'} for a MedMNIST dataset."""
     info = INFO[dataset_flag]
     task = info["task"]
     num_classes = len(info["label"])
+    class_names = [info["label"][str(i)] for i in range(num_classes)]
     loss_kind = "bce" if task == "multi-label, binary-class" else "ce"
-    return {"task": task, "num_classes": num_classes, "loss_kind": loss_kind}
+    return {"task": task, "num_classes": num_classes,
+            "class_names": class_names, "loss_kind": loss_kind}
 
 
 def build_loss(task: str, pos_weight: torch.Tensor | None,
