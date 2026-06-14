@@ -26,22 +26,17 @@ class SumConv(MessagePassing):
         self.message_mlp = nn.Linear(in_channels + self.NUM_ADDED_FEATURES, out_channels, bias=False)
         self.update_mlp = nn.Linear(out_channels * 2, out_channels, bias=False)
 
-        self.weighting = nn.Linear(in_channels * 2 + self.NUM_ADDED_FEATURES, out_channels, bias=False)  # kind of like attention
-
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
         out = self.propagate(edge_index, x=x, pos=pos)
 
         return out
 
-    def message(self, x_i: Tensor, x_j: Tensor, pos_i: Tensor, pos_j: Tensor) -> Tensor:
+    def message(self, x_j: Tensor, pos_i: Tensor, pos_j: Tensor) -> Tensor:
         rel_pos = pos_j - pos_i
         combined = torch.cat([x_j, rel_pos], dim=-1)
 
-        all_features = torch.cat([x_i, x_j, rel_pos], dim=-1)
-        weightings = self.weighting(all_features)
-
-        return self.message_mlp(combined) * weightings
+        return self.message_mlp(combined)
 
     def update(self, aggr_out: Tensor) -> Tensor:
         return self.update_mlp(aggr_out)
