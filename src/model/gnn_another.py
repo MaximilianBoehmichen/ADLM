@@ -24,10 +24,8 @@ class SumConv(MessagePassing):
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__(aggr=["sum", "max"])
 
-        self.message_mlp = nn.Linear(in_channels + self.NUM_ADDED_FEATURES, out_channels, bias=False)
-        self.update_mlp = nn.Linear(out_channels * 2, out_channels, bias=False)
-
-        self.weighting = nn.Linear(self.NUM_WEIGHTING_FEATURES, out_channels, bias=True)
+        self.update_mlp = nn.Linear(in_channels * 2, out_channels, bias=False)
+        self.weighting = nn.Linear(self.NUM_WEIGHTING_FEATURES, in_channels, bias=True)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
@@ -37,13 +35,11 @@ class SumConv(MessagePassing):
 
     def message(self, x_j: Tensor, pos_i: Tensor, pos_j: Tensor) -> Tensor:
         rel_pos = pos_j - pos_i
-        combined = torch.cat([x_j, rel_pos], dim=-1)
-
         dist = rel_pos.norm(dim=-1, keepdim=True)
         weighting_features = torch.cat([rel_pos, dist], dim=-1)
         weighting = self.weighting(weighting_features)
 
-        return self.message_mlp(combined) * weighting
+        return x_j * weighting
 
     def update(self, aggr_out: Tensor) -> Tensor:
         return self.update_mlp(aggr_out)
