@@ -19,7 +19,7 @@ def prune_knn_edges(edge_index: Tensor, num_nodes: int, original_k: int = 15, ke
 class SumConv(MessagePassing):
     """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
     NUM_WEIGHTING_FEATURES = 2 + 1
-    NUM_BASES = 4
+    NUM_BASES = 2
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__(aggr=["sum", "max"])
@@ -29,7 +29,7 @@ class SumConv(MessagePassing):
             nn.ReLU(),
             nn.Linear(self.NUM_BASES, self.NUM_BASES),
             nn.ReLU()
-        )  # just spending the remaining parameter count on
+        )
         self.bases = nn.ModuleList(
             [nn.Linear(in_channels, out_channels, bias=False) for _ in range(self.NUM_BASES)]
         )
