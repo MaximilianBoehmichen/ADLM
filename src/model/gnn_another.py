@@ -99,7 +99,7 @@ class ResNetLikePYGGNN(nn.Module):
             ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2]),
         ])
 
-        self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
+        self.head = nn.Linear(self.CHANNELS[-1], num_classes)
 
     def forward(self, data: Data) -> Tensor:
         x, pos, edge_index, batch = data.x, data.pos, data.edge_index, data.batch
@@ -122,5 +122,5 @@ class ResNetLikePYGGNN(nn.Module):
         for block in self.stages:
             x = block(x, pos, edge_index)
 
-        x = torch.cat([global_mean_pool(x, batch), global_max_pool(x, batch)], dim=-1)
+        x = global_mean_pool(x, batch)
         return self.head(x)
