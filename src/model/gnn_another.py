@@ -19,7 +19,7 @@ def prune_knn_edges(edge_index: Tensor, num_nodes: int, original_k: int = 15, ke
 class SumConv(MessagePassing):
     """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
     NUM_WEIGHTING_FEATURES = 2 + 1
-    NUM_BASES = 4
+    NUM_BASES = 2
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__(aggr=["sum", "max"])
