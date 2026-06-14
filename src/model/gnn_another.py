@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor, nn
 from torch_geometric.data import Data
-from torch_geometric.nn import MessagePassing, global_mean_pool
+from torch_geometric.nn import MessagePassing, global_max_pool, global_mean_pool
 from torch_geometric.utils import add_self_loops
 import torch.nn.functional as F
 
@@ -92,7 +92,7 @@ class ResNetLikePYGGNN(nn.Module):
             ResNetBasicBlock(self.CHANNELS[2], self.CHANNELS[3]),
         ])
 
-        self.head = nn.Linear(self.CHANNELS[-1], num_classes)
+        self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
 
     def forward(self, data: Data) -> Tensor:
         x, pos, edge_index, batch = data.x, data.pos, data.edge_index, data.batch
@@ -115,5 +115,5 @@ class ResNetLikePYGGNN(nn.Module):
         for block in self.stages:
             x = block(x, pos, edge_index)
 
-        x = global_mean_pool(x, batch)
+        x = torch.cat([global_mean_pool(x, batch), global_max_pool(x, batch)], dim=-1)
         return self.head(x)
