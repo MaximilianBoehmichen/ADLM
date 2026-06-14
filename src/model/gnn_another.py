@@ -22,7 +22,7 @@ class SumConv(MessagePassing):
     NUM_BASES = 4
 
     def __init__(self, in_channels: int, out_channels: int):
-        super().__init__(aggr=["sum"])
+        super().__init__(aggr=["sum", "max"])
 
         self.weighting = nn.Sequential(
             nn.Linear(self.NUM_WEIGHTING_FEATURES, self.NUM_BASES),
@@ -33,6 +33,7 @@ class SumConv(MessagePassing):
         self.bases = nn.ModuleList(
             [nn.Linear(in_channels, out_channels, bias=False) for _ in range(self.NUM_BASES)]
         )
+        self.fusion = nn.Linear(out_channels * 2, out_channels, bias=False)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
@@ -53,7 +54,7 @@ class SumConv(MessagePassing):
         return out
 
     def update(self, aggr_out: Tensor) -> Tensor:
-        return aggr_out
+        return self.fusion(aggr_out)
 
 
 class ResNetBasicBlock(nn.Module):
@@ -105,7 +106,7 @@ class ResNetLikePYGGNN(nn.Module):
             ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2]),
         ])
 
-        self.head = nn.Linear(self.CHANNELS[-1], num_classes)
+        self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
 
     def forward(self, data: Data) -> Tensor:
         x, pos, edge_index, batch = data.x, data.pos, data.edge_index, data.batch
@@ -128,5 +129,5 @@ class ResNetLikePYGGNN(nn.Module):
         for block in self.stages:
             x = block(x, pos, edge_index)
 
-        x = global_mean_pool(x, batch)
+        x = torch.cat([global_mean_pool(x, batch), global_max_pool(x, batch)], dim=-1)
         return self.head(x)
