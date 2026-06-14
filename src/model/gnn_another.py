@@ -18,18 +18,20 @@ def prune_knn_edges(edge_index: Tensor, num_nodes: int, original_k: int = 15, ke
 
 class SumConv(MessagePassing):
     """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
-    NUM_ADDED_FEATURES = 2
     NUM_WEIGHTING_FEATURES = 2 + 1
-    HIDDEN_DIM = 16
+    NUM_BASES = 8
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__(aggr=["sum"])
 
-        self.update_mlp = nn.Linear(in_channels, out_channels, bias=False)
         self.weighting = nn.Sequential(
-            nn.Linear(self.NUM_WEIGHTING_FEATURES, self.HIDDEN_DIM, bias=True),
+            nn.Linear(self.NUM_WEIGHTING_FEATURES, self.NUM_BASES),
             nn.ReLU(),
-            nn.Linear(self.HIDDEN_DIM, in_channels, bias=True),
+            nn.Linear(self.NUM_BASES, self.NUM_BASES),
+            nn.ReLU()
+        )  # just spending the remaining parameter count on
+        self.bases = nn.ModuleList(
+            [nn.Linear(in_channels, out_channels, bias=False) for _ in range(self.NUM_BASES)]
         )
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
@@ -44,10 +46,14 @@ class SumConv(MessagePassing):
         weighting_features = torch.cat([rel_pos, dist], dim=-1)
         weighting = self.weighting(weighting_features)
 
-        return x_j * weighting
+        out = x_j.new_zeros(x_j.size(0), self.bases[0].out_features)
+        for b, basis in enumerate(self.bases):
+            out = out + weighting[:, b:b + 1] * basis(x_j)
+
+        return out
 
     def update(self, aggr_out: Tensor) -> Tensor:
-        return self.update_mlp(aggr_out)
+        return aggr_out
 
 
 class ResNetBasicBlock(nn.Module):
