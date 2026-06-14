@@ -174,7 +174,7 @@ def main():
     num_classes = task_info["num_classes"]
     class_names = task_info["class_names"]
 
-    transforms = Compose([encode_rotation])
+    transforms = Compose([])  # Compose([encode_rotation])
     data_root = Path(args.data_root) / args.dataset
 
     t0 = time.perf_counter()
@@ -198,7 +198,7 @@ def main():
 
     stats_path = ROOT / "cache" / args.dataset / "feature_stats.pt"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
-    expected_in_dim = 7
+    expected_in_dim = 6
     cache_valid = False
     if stats_path.exists() and args.max_samples is None:
         saved = torch.load(stats_path, weights_only=True)
