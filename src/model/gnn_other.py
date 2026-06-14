@@ -2,7 +2,7 @@ import torch
 from torch import nn, Tensor
 from torch_geometric.data import Data
 import torch.nn.functional as F
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_max_pool, global_mean_pool
 
 
 class ResNetLikeGNN(nn.Module):
@@ -25,11 +25,11 @@ class ResNetLikeGNN(nn.Module):
             ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2], k)
         )
 
-        self.head = nn.Linear(self.CHANNELS[-1], num_classes)
+        self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
 
     def forward(self, data: Data) -> Tensor:
         data = self.stages(self.stem(data))
-        x = global_mean_pool(data.x, data.batch)
+        x = torch.cat([global_mean_pool(data.x, data.batch), global_max_pool(data.x, data.batch)], dim=-1)
 
         return self.head(x)
 
