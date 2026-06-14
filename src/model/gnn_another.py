@@ -17,14 +17,14 @@ def prune_knn_edges(edge_index: Tensor, num_nodes: int, original_k: int = 15, ke
 
 
 class SumConv(MessagePassing):
-    """MessagePassing equivalent to KNNConv."""
+    """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
     NUM_ADDED_FEATURES = 2
 
     def __init__(self, in_channels: int, out_channels: int):
-        super().__init__(aggr='sum')
+        super().__init__(aggr=["sum", "max"])
 
         self.message_mlp = nn.Linear(in_channels + self.NUM_ADDED_FEATURES, out_channels, bias=False)
-        self.update_mlp = nn.Linear(out_channels, out_channels, bias=False)
+        self.update_mlp = nn.Linear(out_channels * 2, out_channels, bias=False)
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
@@ -76,7 +76,7 @@ class ResNetBasicBlock(nn.Module):
 
 
 class ResNetLikePYGGNN(nn.Module):
-    CHANNELS = [16, 32, 64, 128]
+    CHANNELS = [16, 32, 64]
 
     def __init__(self, in_channels: int, num_classes: int, k: int = 9) -> None:
         super().__init__()
@@ -89,7 +89,6 @@ class ResNetLikePYGGNN(nn.Module):
             ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0]),
             ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[1]),
             ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2]),
-            ResNetBasicBlock(self.CHANNELS[2], self.CHANNELS[3]),
         ])
 
         self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
