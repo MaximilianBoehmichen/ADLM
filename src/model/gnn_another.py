@@ -23,9 +23,9 @@ class SumConv(MessagePassing):
     HIDDEN_DIM = 16
 
     def __init__(self, in_channels: int, out_channels: int):
-        super().__init__(aggr=["sum", "max"])
+        super().__init__(aggr=["sum"])
 
-        self.update_mlp = nn.Linear(in_channels * 2, out_channels, bias=False)
+        self.update_mlp = nn.Linear(in_channels, out_channels, bias=False)
         self.weighting = nn.Sequential(
             nn.Linear(self.NUM_WEIGHTING_FEATURES, self.HIDDEN_DIM, bias=True),
             nn.ReLU(),
