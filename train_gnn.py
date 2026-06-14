@@ -38,7 +38,7 @@ from dataset.transforms import (
     FeatureNormalization,
     encode_rotation,
 )
-from model.gnn_another import ResNetLikePYGGNN
+from model.gnn_another import ResNetLikePYGGNN, SumConv
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
@@ -285,6 +285,11 @@ def main():
               f"train loss {train_out['loss']:.4f} auc {train_out['auroc']:.4f} | "
               f"val loss {val_out['loss']:.4f} auc {val_out['auroc']:.4f} | "
               f"{t_train + t_val:.1f}s")
+
+    for name, module in model.named_modules():
+        if isinstance(module, SumConv):
+            g = module.gate.detach()
+            print(f"{name:30s} mean|g|={g.abs().mean():.3f}  min={g.min():.3f}  max={g.max():.3f}")
 
     # Final test metrics. Overall AUC/ACC via the official MedMNIST Evaluator;
     # per-class AUC via torchmetrics (the Evaluator returns only the macro mean).

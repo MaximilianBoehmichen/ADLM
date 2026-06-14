@@ -19,7 +19,7 @@ def prune_knn_edges(edge_index: Tensor, num_nodes: int, original_k: int = 15, ke
 class SumConv(MessagePassing):
     """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
     NUM_WEIGHTING_FEATURES = 2 + 1
-    NUM_BASES = 2
+    NUM_BASES = 8
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__(aggr=["sum", "max"])
@@ -33,7 +33,7 @@ class SumConv(MessagePassing):
         self.bases = nn.ModuleList(
             [nn.Linear(in_channels, out_channels, bias=False) for _ in range(self.NUM_BASES)]
         )
-        self.fusion = nn.Linear(out_channels * 2, out_channels, bias=False)
+        self.gate = nn.Parameter(torch.zeros(out_channels))
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
@@ -54,7 +54,9 @@ class SumConv(MessagePassing):
         return out
 
     def update(self, aggr_out: Tensor) -> Tensor:
-        return self.fusion(aggr_out)
+        summed, maxed = aggr_out.chunk(2, dim=-1)
+
+        return summed + self.gate * maxed
 
 
 class ResNetBasicBlock(nn.Module):
