@@ -222,7 +222,7 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResNetLikePYGGNN(in_channels=7, num_classes=num_classes).to(device)
+    model = ResNetLikePYGGNN(in_channels=expected_in_dim, num_classes=num_classes).to(device)
 
     N, K = 836, 15
     src = torch.arange(N, device=device).repeat_interleave(K)
