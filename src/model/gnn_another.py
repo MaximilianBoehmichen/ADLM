@@ -20,12 +20,17 @@ class SumConv(MessagePassing):
     """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
     NUM_ADDED_FEATURES = 2
     NUM_WEIGHTING_FEATURES = 2 + 1
+    HIDDEN_DIM = 16
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__(aggr=["sum", "max"])
 
         self.update_mlp = nn.Linear(in_channels * 2, out_channels, bias=False)
-        self.weighting = nn.Linear(self.NUM_WEIGHTING_FEATURES, in_channels, bias=True)
+        self.weighting = nn.Sequential(
+            nn.Linear(self.NUM_WEIGHTING_FEATURES, self.HIDDEN_DIM, bias=True),
+            nn.ReLU(),
+            nn.Linear(self.HIDDEN_DIM, in_channels, bias=True),
+        )
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
