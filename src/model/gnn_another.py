@@ -54,17 +54,17 @@ class ResNetBasicBlock(nn.Module):
         super().__init__()
 
         self.conv1 = SumConv(in_channels, out_channels)
-        self.norm1 = nn.LayerNorm(out_channels)
+        self.norm1 = nn.BatchNorm1d(out_channels)
 
         self.conv2 = SumConv(out_channels, out_channels)
-        self.norm2 = nn.LayerNorm(out_channels)
+        self.norm2 = nn.BatchNorm1d(out_channels)
 
         self.shortcut = nn.Sequential()
 
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Linear(in_channels, out_channels, bias=False),
-                nn.LayerNorm(out_channels)
+                nn.BatchNorm1d(out_channels)
             )
 
     def forward(self, x: Tensor, pos: Tensor, edge_index: Tensor) -> Tensor:
@@ -90,7 +90,7 @@ class ResNetLikePYGGNN(nn.Module):
         self.k = k
 
         self.stem_conv = SumConv(in_channels, self.CHANNELS[0])
-        self.stem_norm = nn.LayerNorm(self.CHANNELS[0])
+        self.stem_norm = nn.BatchNorm1d(self.CHANNELS[0])
 
         self.stages = nn.ModuleList([
             ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0]),
