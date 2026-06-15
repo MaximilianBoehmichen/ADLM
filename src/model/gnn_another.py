@@ -24,7 +24,7 @@ class SumConv(MessagePassing):
 
     def __init__(self, in_channels: int, out_channels: int, num_bases: int = 8):
         super().__init__(aggr=["sum", "max"])
-        self.num_bases = num_bases
+        self.NUM_BASES = num_bases
 
         self.weighting = nn.Sequential(
             nn.Linear(self.NUM_WEIGHTING_FEATURES, self.HIDDEN_DIM),
