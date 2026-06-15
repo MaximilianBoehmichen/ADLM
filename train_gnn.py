@@ -73,6 +73,7 @@ def parse_args():
                    help="DropEdge probability during training (0 = disabled)")
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--layers", type=int, default=3)
+    p.add_argument("--num-bases", type=int, default=8)
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap dataset size (e.g. 32 to overfit a single batch)")
     p.add_argument("--in-memory", action="store_true",
@@ -222,7 +223,7 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResNetLikePYGGNN(in_channels=expected_in_dim, num_classes=num_classes).to(device)
+    model = ResNetLikePYGGNN(in_channels=expected_in_dim, num_classes=num_classes, num_bases=args.num_bases).to(device)
 
     N, K = 836, 15
     src = torch.arange(N, device=device).repeat_interleave(K)

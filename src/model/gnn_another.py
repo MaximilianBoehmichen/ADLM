@@ -20,14 +20,16 @@ class SumConv(MessagePassing):
     """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
     NUM_WEIGHTING_FEATURES = 2 + 1
     NUM_BASES = 2
+    HIDDEN_DIM = 16
 
-    def __init__(self, in_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, out_channels: int, num_bases: int = 8):
         super().__init__(aggr=["sum", "max"])
+        self.num_bases = num_bases
 
         self.weighting = nn.Sequential(
-            nn.Linear(self.NUM_WEIGHTING_FEATURES, self.NUM_BASES),
+            nn.Linear(self.NUM_WEIGHTING_FEATURES, self.HIDDEN_DIM),
             nn.ReLU(),
-            nn.Linear(self.NUM_BASES, self.NUM_BASES),
+            nn.Linear(self.HIDDEN_DIM, self.NUM_BASES),
             nn.ReLU()
         )
         self.bases = nn.ModuleList(
@@ -60,13 +62,13 @@ class SumConv(MessagePassing):
 
 
 class ResNetBasicBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, out_channels: int, num_bases: int = 8):
         super().__init__()
 
-        self.conv1 = SumConv(in_channels, out_channels)
+        self.conv1 = SumConv(in_channels, out_channels, num_bases)
         self.norm1 = nn.BatchNorm1d(out_channels)
 
-        self.conv2 = SumConv(out_channels, out_channels)
+        self.conv2 = SumConv(out_channels, out_channels, num_bases)
         self.norm2 = nn.BatchNorm1d(out_channels)
 
         self.shortcut = nn.Sequential()
@@ -95,17 +97,17 @@ class ResNetBasicBlock(nn.Module):
 class ResNetLikePYGGNN(nn.Module):
     CHANNELS = [16, 32, 64]
 
-    def __init__(self, in_channels: int, num_classes: int, k: int = 9) -> None:
+    def __init__(self, in_channels: int, num_classes: int, k: int = 9, num_bases: int = 8) -> None:
         super().__init__()
         self.k = k
 
-        self.stem_conv = SumConv(in_channels, self.CHANNELS[0])
+        self.stem_conv = SumConv(in_channels, self.CHANNELS[0], num_bases=num_bases)
         self.stem_norm = nn.BatchNorm1d(self.CHANNELS[0])
 
         self.stages = nn.ModuleList([
-            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0]),
-            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[1]),
-            ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2]),
+            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0], num_bases=num_bases),
+            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[1], num_bases=num_bases),
+            ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2], num_bases=num_bases),
         ])
 
         self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
