@@ -119,3 +119,21 @@ def to_undirected_transform(data: Data) -> Data:
     assert edge_index is not None
     data.edge_index = to_undirected(edge_index, num_nodes=data.num_nodes)
     return data
+
+
+def extract_layout(data: Data) -> Data:
+    """Copies the layout features (effectively everything except the intensity) to a layout variable.
+
+    This can be used to determine the weight of the message as it describes the node.
+
+    Args:
+        data: The data object to work on.
+
+    Returns:
+        The modified data.
+    """
+    x = data.x
+    assert x is not None
+
+    data.layout = x[:, :5].clone()
+    return data

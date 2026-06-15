@@ -36,7 +36,7 @@ import wandb
 from dataset.gaussian2D import Gaussian2DDataset
 from dataset.transforms import (
     FeatureNormalization,
-    encode_rotation,
+    encode_rotation, extract_layout,
 )
 from model.gnn_another import ResNetLikePYGGNN, SumConv
 from training.metrics import EpochMetrics, run_medmnist_evaluator
@@ -175,7 +175,7 @@ def main():
     num_classes = task_info["num_classes"]
     class_names = task_info["class_names"]
 
-    transforms = Compose([encode_rotation])
+    transforms = Compose([extract_layout, encode_rotation])
     data_root = Path(args.data_root) / args.dataset
 
     t0 = time.perf_counter()
@@ -223,7 +223,12 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResNetLikePYGGNN(in_channels=expected_in_dim, num_classes=num_classes, num_bases=args.num_bases).to(device)
+    model = ResNetLikePYGGNN(
+        in_channels=expected_in_dim,
+        num_classes=num_classes,
+        num_bases=args.num_bases,
+        hidden_dim=args.hidden,
+    ).to(device)
 
     N, K = 836, 15
     src = torch.arange(N, device=device).repeat_interleave(K)
@@ -232,6 +237,7 @@ def main():
         Data(
             x=torch.randn(N, expected_in_dim, device=device),
             pos=torch.rand(N, 2, device=device),
+            layout=torch.randn(N, 5, device=device),
             edge_index=torch.stack([src, dst]),
             y=torch.tensor([0], device=device),
         )
