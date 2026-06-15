@@ -32,6 +32,8 @@ class SumConv(MessagePassing):
         self.weighting = nn.Sequential(
             nn.Linear(self.NUM_WEIGHTING_FEATURES, self.hidden_dim),
             nn.LeakyReLU(0.1),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.LeakyReLU(0.1),
             nn.Linear(self.hidden_dim, self.num_bases),
             nn.LeakyReLU(0.1),
         )
