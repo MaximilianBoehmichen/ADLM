@@ -181,6 +181,11 @@ def build_dataloaders(config: Config) -> tuple[Loaders, NormalizationStats]:
 
         return build_gaussian_loaders(config)
 
+    if config.inr_root is not None:
+        from inr2vec.inr_step2.data import build_inr_loaders
+
+        return build_inr_loaders(config)
+
     info = dataset_info(config.dataset)
     data_root = config.output_dir / "medmnist_cache"
     data_root.mkdir(parents=True, exist_ok=True)

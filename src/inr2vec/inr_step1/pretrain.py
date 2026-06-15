@@ -30,26 +30,12 @@ import numpy as np
 import torch
 from medmnist import INFO
 
-from inr2vec.inr_step1.defs import PROJECT_ROOT
+from inr2vec.inr_step1.defs import BEST_CONFIG, PROJECT_ROOT
 from inr2vec.inr_step1.hparam_search import load_split, make_coord_grid, to_tensor
-from inr2vec.inr_step1.model import INR, RFFPE
+from inr2vec.inr_step1.model import INR
 from inr2vec.inr_step1.train import train_inr
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data"
-
-# Frozen best config from the RFFPE hparam search (mean PSNR 38.50 dB on the
-# 64-image chestmnist probe). The seed fixes BOTH the RFFPE basis B and the
-# weight initialization, so every image shares an identical encoder input space
-# and starting point — the consistency inr2vec's weight-space encoder relies on.
-BEST_CONFIG: dict = {
-    "pe": RFFPE,
-    "hidden_dim": 12,
-    "hidden_layers": 5,
-    "num_frequencies": 224,
-    "num_bands": 6,
-    "sigma": 4,
-    "seed": 1306993369,
-}
 
 
 def build_label_tensor(label_np: np.ndarray, task: str) -> torch.Tensor:

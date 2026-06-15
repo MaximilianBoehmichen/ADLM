@@ -60,13 +60,12 @@ def main() -> None:
         normalization=normalization,
     )
 
-    print(
-        summary(
-            model,
-            input_size=(1, 1, config.image_size, config.image_size),
-            verbose=0,
-        )
-    )
+    if config.inr_root is not None:
+        input_size = (1, model.input_numel)
+    else:
+        input_size = (1, 1, config.image_size, config.image_size)
+
+    print(summary(model, input_size=input_size, verbose=0))
 
     train(config, model, loaders, info)
 

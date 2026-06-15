@@ -11,8 +11,28 @@ from collections.abc import Callable
 from baseline.models.base import BaseModel, NormalizationStats
 from baseline.models.resnet8 import ResNet8
 
+
+def _lazy_inr(class_name: str) -> Callable[..., BaseModel]:
+    """Defer importing the inr2vec models until a model is actually built.
+
+    ``inr2vec.inr_step2.model`` imports :class:`BaseModel` from this package, so
+    importing it eagerly here would create a circular import. The factory runs
+    only inside :func:`build_model`, by which point this package is fully loaded.
+    """
+
+    def factory(**kwargs: object) -> BaseModel:
+        from inr2vec.inr_step2 import model as inr_models
+
+        return getattr(inr_models, class_name)(**kwargs)
+
+    return factory
+
+
 MODELS: dict[str, Callable[..., BaseModel]] = {
     "resnet8": ResNet8,
+    "inr2vec_paper": _lazy_inr("Inr2vecPaper"),
+    "inr2vec_input": _lazy_inr("Inr2vecInput"),
+    "inr2vec_full": _lazy_inr("Inr2vecFull"),
 }
 
 

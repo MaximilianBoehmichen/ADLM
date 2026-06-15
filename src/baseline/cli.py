@@ -29,6 +29,7 @@ class Config:
     gaussian_root: Path | None = None
     gaussian_k: int = 15
     gaussian_cache: bool = False
+    inr_root: Path | None = None
     run_name: str = field(
         default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S")
     )
@@ -118,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cache each rendered image in memory as uint8 after first access "
         "(per-worker; peak memory scales with --num-workers).",
     )
+    parser.add_argument(
+        "--inr-root",
+        type=Path,
+        default=None,
+    )
     parser.add_argument("--seed", type=int, default=848577)
     parser.add_argument(
         "--num-workers",
@@ -177,6 +183,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         gaussian_root=args.gaussian_root,
         gaussian_k=args.gaussian_k,
         gaussian_cache=args.gaussian_cache,
+        inr_root=args.inr_root,
         run_name=run_name,
         wandb=args.wandb,
         wandb_project=args.wandb_project,
