@@ -312,7 +312,14 @@ class GaussianRepresentationND(nn.Module):
 
 
 # --- Data Loading Utility ---
-def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=True, size=224):
+def load_medmnist_dataset(
+        dataset_flag="chestmnist",
+        split="train",
+        download=True,
+        size=224,
+        *,
+        root: str = str(Path(__file__).resolve().parent / "data" / "medmnist_cache"),
+):
     """Load a full MedMNIST dataset for a given split.
 
     Returns the dataset object, the INFO metadata dict, and the spatial dimension D.
@@ -320,7 +327,7 @@ def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=Tru
     import medmnist as medmnist_module
     info = INFO[dataset_flag]
     DataClass = getattr(medmnist_module, info['python_class'])
-    dataset = DataClass(split=split, download=download, size=size)
+    dataset = DataClass(split=split, download=download, size=size, root=root)
     D = 3 if "3d" in dataset_flag.lower() else 2
     return dataset, info, D
 
@@ -382,7 +389,8 @@ def compute_regularization_losses(gs_model: GaussianRepresentationND,
 
 # --- Training Loop ---
 def train_gs(gs: GaussianRepresentationND, img_tensor: torch.Tensor,
-             params: TrainingConfig, logging_dir: Optional[Path] = None):
+             params: TrainingConfig, logging_dir: Optional[Path] = None,
+             debug: bool = False):
     if logging_dir is not None:
         logging_dir.mkdir(parents=True, exist_ok=True)
     shape_tensor = torch.tensor(img_tensor.shape, device=img_tensor.device)
@@ -403,7 +411,7 @@ def train_gs(gs: GaussianRepresentationND, img_tensor: torch.Tensor,
 
     # 3. FAISS Setup (GPU if available, else CPU)
     cpu_index = faiss.IndexFlatL2(D)
-    if hasattr(faiss, 'StandardGpuResources'):
+    if hasattr(faiss, 'get_num_gpus') and faiss.get_num_gpus() > 0:
         res = faiss.StandardGpuResources()
         faiss_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
     else:
@@ -416,7 +424,13 @@ def train_gs(gs: GaussianRepresentationND, img_tensor: torch.Tensor,
     progress_ims_epochs = []
     progress_ims_psnrs = []
     loss, loss_rec, loss_scale, loss_pos = [torch.tensor([torch.inf])]*4
-    for epoch in range(params.max_epochs):
+    epoch_iter = range(params.max_epochs)
+
+    if debug:
+        from tqdm import tqdm
+        epoch_iter = tqdm(epoch_iter, desc="Optimizing", leave=False)
+
+    for epoch in epoch_iter:
         if logging_dir is not None:
             if epoch % 100 == 0:
                 # Progress print
@@ -464,6 +478,9 @@ def train_gs(gs: GaussianRepresentationND, img_tensor: torch.Tensor,
         loss.backward()
         optimizer.step()
         scheduler.step()
+
+        if debug:
+            epoch_iter.set_postfix(epoch=epoch, loss=f"{loss.item():.6f}")
 
         # Update FAISS Index periodically to track moving Gaussians
         if (epoch + 1) % params.knn_update_rate == 0:
