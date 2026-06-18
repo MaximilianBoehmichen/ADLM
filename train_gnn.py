@@ -59,7 +59,7 @@ def set_seed(seed: int):
 def parse_args():
     p = argparse.ArgumentParser(description="Train GCN classifier on Gaussian graphs.")
     p.add_argument("--dataset", default="chestmnist",
-                   choices=["pneumoniamnist", "chestmnist", "chestmnistNEW"])
+                   choices=["pneumoniamnist", "chestmnist", "chestmnistNEW", "organmnist3d"])
     p.add_argument("--data-root", default="data",
                    help="Parent dir containing {dataset}/{split}/*.pt")
     p.add_argument("--epochs", type=int, default=50)
