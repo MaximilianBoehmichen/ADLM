@@ -29,7 +29,7 @@ class SumConv(MessagePassing):
             nn.ReLU(),
             nn.Linear(self.NUM_BASES, self.NUM_BASES),
             nn.ReLU()
-        )  # just spending the remaining parameter count on
+        )  # just spending the remaining parameter count on something
         self.bases = nn.ModuleList(
             [nn.Linear(in_channels, out_channels, bias=False) for _ in range(self.NUM_BASES)]
         )
