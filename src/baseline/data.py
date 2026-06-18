@@ -33,6 +33,7 @@ class DatasetInfo:
     class_names: list[str]
     is_multilabel: bool
     in_channels_original: int
+    is_3d: bool
 
 
 @dataclass(slots=True)
@@ -58,10 +59,9 @@ def dataset_info(name: str) -> DatasetInfo:
             the scaffolding to extend support is in place but
             unverified.
     """
-    if name != "chestmnist":
-        raise NotImplementedError(
-            f"Only 'chestmnist' is supported right now; got {name!r}. "
-        )
+    if name not in INFO:
+        raise KeyError()
+
     info = INFO[name]
 
     return DatasetInfo(
@@ -71,7 +71,26 @@ def dataset_info(name: str) -> DatasetInfo:
         class_names=[info["label"][str(i)] for i in range(len(info["label"]))],
         is_multilabel="multi-label" in info["task"],
         in_channels_original=info["n_channels"],
+        is_3d=name.endswith("3d"),
     )
+
+
+class _NDToTensor:
+    def __call__(self, img: np.ndarray) -> torch.Tensor:
+        return torch.as_tensor(np.asarray(img), dtype=torch.float32)
+
+
+class _NDNormalize:
+    def __init__(self, mean: list[float], std: list[float]) -> None:
+        self.mean = torch.tensor(mean).view(-1, 1, 1, 1)
+        self.std = torch.tensor(std).view(-1, 1, 1, 1)
+
+        self.ndtotensor = _NDToTensor()
+
+    def __call__(self, img: np.ndarray) -> torch.Tensor:
+        x = self.ndtotensor(img)
+
+        return (x - self.mean) / self.std
 
 
 def _compute_dataset_stats(
@@ -204,35 +223,45 @@ def build_dataloaders(config: Config) -> tuple[Loaders, NormalizationStats]:
         split="test", download=True, root=str(data_root), size=config.image_size
     )
 
-    # Per-channel mean/std on the raw training images.
-    stats_transform = transforms.Compose(
-        [
-            transforms.Resize((config.image_size, config.image_size)),
-            transforms.ToTensor(),
-        ],
-    )
-    stats_dataset = _MedMNISTWrapper(raw_train, stats_transform, info.is_multilabel)
-    mean, std = _compute_dataset_stats(stats_dataset, info.in_channels_original)
-    normalize = transforms.Normalize(mean=mean, std=std)
+    if not info.is_3d:
+        # Per-channel mean/std on the raw training images.
+        stats_transform = transforms.Compose(
+            [
+                transforms.Resize((config.image_size, config.image_size)),
+                transforms.ToTensor(),
+            ],
+        )
+        stats_dataset = _MedMNISTWrapper(raw_train, stats_transform, info.is_multilabel)
+        mean, std = _compute_dataset_stats(stats_dataset, info.in_channels_original)
+        normalize = transforms.Normalize(mean=mean, std=std)
 
-    train_transform = transforms.Compose(
-        [
-            transforms.Resize((config.image_size, config.image_size)),
-            transforms.ToTensor(),
-            normalize,
-        ],
-    )
-    eval_transform = transforms.Compose(
-        [
-            transforms.Resize((config.image_size, config.image_size)),
-            transforms.ToTensor(),
-            normalize,
-        ],
-    )
+        train_transform = transforms.Compose(
+            [
+                transforms.Resize((config.image_size, config.image_size)),
+                transforms.ToTensor(),
+                normalize,
+            ],
+        )
+        eval_transform = transforms.Compose(
+            [
+                transforms.Resize((config.image_size, config.image_size)),
+                transforms.ToTensor(),
+                normalize,
+            ],
+        )
+
+    else:
+        stats_transform = transforms.Compose([_NDToTensor()])
+        stats_dataset = _MedMNISTWrapper(raw_train, stats_transform, info.is_multilabel)
+        mean, std = _compute_dataset_stats(stats_dataset, info.in_channels_original)
+        train_transform = transforms.Compose([_NDNormalize(mean, std)])
+        eval_transform = transforms.Compose([_NDNormalize(mean, std)])
 
     train_ds = _MedMNISTWrapper(raw_train, train_transform, info.is_multilabel)
     val_ds = _MedMNISTWrapper(raw_val, eval_transform, info.is_multilabel)
     test_ds = _MedMNISTWrapper(raw_test, eval_transform, info.is_multilabel)
+
+
 
     loader_kwargs = {
         "pin_memory": True,

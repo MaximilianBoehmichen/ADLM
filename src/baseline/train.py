@@ -103,12 +103,10 @@ def _build_criterion(is_multilabel: bool) -> nn.Module:
         NotImplementedError: For multi-class data; only the multi-label
             branch is wired up.
     """
-    if not is_multilabel:
-        raise NotImplementedError(
-            "Only multi-label loss (BCEWithLogitsLoss) is wired up.",
-        )
+    if is_multilabel:
+        return nn.BCEWithLogitsLoss()
 
-    return nn.BCEWithLogitsLoss()
+    return nn.CrossEntropyLoss()
 
 
 def _build_scheduler(

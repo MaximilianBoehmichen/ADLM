@@ -10,6 +10,7 @@ from collections.abc import Callable
 
 from baseline.models.base import BaseModel, NormalizationStats
 from baseline.models.resnet8 import ResNet8
+from baseline.models.resnet8_3d import ResNet8_3D
 
 
 def _lazy_inr(class_name: str) -> Callable[..., BaseModel]:
@@ -33,6 +34,7 @@ MODELS: dict[str, Callable[..., BaseModel]] = {
     "inr2vec_paper": _lazy_inr("Inr2vecPaper"),
     "inr2vec_input": _lazy_inr("Inr2vecInput"),
     "inr2vec_full": _lazy_inr("Inr2vecFull"),
+    "resnet8_3d": ResNet8_3D,
 }
 
 

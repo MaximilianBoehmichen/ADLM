@@ -65,7 +65,11 @@ def evaluate(
         loss_sum += criterion(logits, labels).item()
         n_batches += 1
 
-        scores.append(torch.sigmoid(logits).cpu().numpy())
+        if dataset_info.is_multilabel:
+            scores.append(torch.sigmoid(logits).cpu().numpy())
+        else:
+            scores.append(torch.softmax(logits, dim=1).cpu().numpy())
+
         targets.append(labels.cpu().numpy())
 
     y_score = np.concatenate(scores)
@@ -79,14 +83,25 @@ def evaluate(
     )
     overall_auc, overall_acc = evaluator.evaluate(y_score)
 
-    per_class_auc = [
-        getAUC(y_true[:, i], y_score[:, i], "binary-class")
-        for i in range(dataset_info.num_classes)
-    ]
-    per_class_acc = [
-        getACC(y_true[:, i], y_score[:, i], "binary-class")
-        for i in range(dataset_info.num_classes)
-    ]
+    if dataset_info.is_multilabel:
+        per_class_auc = [
+            getAUC(y_true[:, i], y_score[:, i], "binary-class")
+            for i in range(dataset_info.num_classes)
+        ]
+        per_class_acc = [
+            getACC(y_true[:, i], y_score[:, i], "binary-class")
+            for i in range(dataset_info.num_classes)
+        ]
+    else:
+        y_true_flat = y_true.reshape(-1)
+        per_class_auc = [
+            getAUC((y_true_flat == i).astype(int), y_score[:, i], "binary-class")
+            for i in range(dataset_info.num_classes)
+        ]
+        per_class_acc = [
+            getACC((y_true_flat == i).astype(int), y_score[:, i], "binary-class")
+            for i in range(dataset_info.num_classes)
+        ]
 
     return EvalResult(
         auc=float(overall_auc),

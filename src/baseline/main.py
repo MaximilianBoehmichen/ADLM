@@ -62,6 +62,8 @@ def main() -> None:
 
     if config.inr_root is not None:
         input_size = (1, model.input_numel)
+    elif info.is_3d:
+        input_size = (1, 1, config.image_size, config.image_size, config.image_size)
     else:
         input_size = (1, 1, config.image_size, config.image_size)
 
