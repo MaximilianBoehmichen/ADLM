@@ -198,7 +198,7 @@ def main():
 
     stats_path = ROOT / "cache" / args.dataset / "feature_stats.pt"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
-    expected_in_dim = 7
+    expected_in_dim = 12
     cache_valid = False
     if stats_path.exists() and args.max_samples is None:
         saved = torch.load(stats_path, weights_only=True)
@@ -224,13 +224,13 @@ def main():
 
     model = ResNetLikePYGGNN(in_channels=expected_in_dim, num_classes=num_classes).to(device)
 
-    N, K = 836, 15
+    N, K = 2383, 15
     src = torch.arange(N, device=device).repeat_interleave(K)
     dst = torch.randint(0, N, (N * K,), device=device)
     sample = Batch.from_data_list([
         Data(
             x=torch.randn(N, expected_in_dim, device=device),
-            pos=torch.rand(N, 2, device=device),
+            pos=torch.rand(N, 3, device=device),
             edge_index=torch.stack([src, dst]),
             y=torch.tensor([0], device=device),
         )
