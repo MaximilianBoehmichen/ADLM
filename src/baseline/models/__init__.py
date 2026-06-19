@@ -59,3 +59,5 @@ def build_model(
         normalization=normalization,
         in_channels=1,  # hardcoded for now
     )
+
+
