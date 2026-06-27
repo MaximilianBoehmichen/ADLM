@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
-from torch_geometric.utils import to_undirected
+from torch_geometric.utils import add_self_loops, coalesce, to_undirected
 
 
 def pos_normalization(
@@ -118,6 +118,30 @@ def to_undirected_transform(data: Data) -> Data:
     edge_index = data.edge_index
     assert edge_index is not None
     data.edge_index = to_undirected(edge_index, num_nodes=data.num_nodes)
+    return data
+
+
+def limited_undirected_knn(data: Data, k: int = 9) -> Data:
+    """Prune the stored directed KNN graph to `k` edges/node (self-loop included),
+    add the self-loop, then symmetrize. Modifies in place.
+    """
+    edge_index = data.edge_index
+    assert edge_index is not None
+
+    num_nodes = data.num_nodes
+    original_k = edge_index.size(1) // num_nodes
+    keep_k = k - 1  # for the self-loop
+
+    src, dst = edge_index
+    src = src.view(num_nodes, original_k)[:, :keep_k].reshape(-1)
+    dst = dst.view(num_nodes, original_k)[:, :keep_k].reshape(-1)
+
+    src_sym = torch.cat([src, dst])
+    dst_sym = torch.cat([dst, src])
+    edge_index = torch.stack([src_sym, dst_sym], dim=0)
+
+    edge_index, _ = add_self_loops(edge_index, num_nodes=num_nodes)
+    data.edge_index = coalesce(edge_index, num_nodes=num_nodes)
     return data
 
 

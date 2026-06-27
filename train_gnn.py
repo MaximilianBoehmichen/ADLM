@@ -228,6 +228,7 @@ def main():
         num_classes=num_classes,
         num_bases=args.num_bases,
         hidden_dim=args.hidden,
+        num_layers=args.layers,
     ).to(device)
 
     N, K = 836, 15

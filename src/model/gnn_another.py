@@ -18,27 +18,51 @@ def prune_knn_edges(edge_index: Tensor, num_nodes: int, original_k: int = 15, ke
 
 class SumConv(MessagePassing):
     """MessagePassing equivalent to KNNConv. Name no longer accurate :)."""
-    NUM_WEIGHTING_FEATURES = 2 + 1 + 2 + 2 + 1 + 1
+    NUM_WEIGHTING_FEATURES: int
     num_bases = 2
     hidden_dim = 8
     out_channels: int
 
-    def __init__(self, in_channels: int, out_channels: int, num_bases: int = 2, hidden_dim: int = 8):
-        super().__init__(aggr=["sum", "max"])
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_bases: int = 2,
+        hidden_dim: int = 8,
+        num_layers: int = 8,
+        d: int = 2
+    ) -> None:
+        super().__init__(aggr=["sum"])
         self.out_channels = out_channels
         self.num_bases = num_bases
         self.hidden_dim = hidden_dim
+        self.NUM_WEIGHTING_FEATURES = 9 if d == 2 else 0
 
         self.weighting = nn.Sequential(
             nn.Linear(self.NUM_WEIGHTING_FEATURES, self.hidden_dim),
-            nn.LeakyReLU(0.1),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.LeakyReLU(0.1),
-            nn.Linear(self.hidden_dim, self.num_bases),
+            nn.LayerNorm(hidden_dim),
             nn.LeakyReLU(0.1),
         )
+        for _ in range(num_layers - 2):
+            self.weighting.extend([
+                nn.Linear(self.hidden_dim, self.hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.LeakyReLU(0.1),
+            ])
+
+        self.weighting.extend([
+            nn.Linear(self.hidden_dim, self.num_bases),
+            nn.LeakyReLU(0.1),
+        ])
+
+        for layer in self.weighting:
+            if isinstance(layer, nn.Linear):
+                nn.init.kaiming_uniform_(layer.weight, a=0.1, nonlinearity='leaky_relu')
+
+                if layer.bias is not None:
+                    nn.init.zeros_(layer.bias)
+
         self.bases = nn.Linear(in_channels, num_bases * out_channels, bias=False)
-        self.gate = nn.Parameter(torch.zeros(out_channels))
 
     def forward(self, x: Tensor, layout: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
@@ -73,27 +97,25 @@ class SumConv(MessagePassing):
         return torch.einsum("eb,ebo->eo", coeff, h_j)
 
     def update(self, aggr_out: Tensor) -> Tensor:
-        summed, maxed = aggr_out.chunk(2, dim=-1)
-
-        return summed + self.gate * maxed
+        return aggr_out
 
 
 class ResNetBasicBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, num_bases: int = 8, hidden_dim: int = 8):
+    def __init__(self, in_channels: int, out_channels: int, num_bases: int = 8, hidden_dim: int = 8, num_layers: int = 3):
         super().__init__()
 
-        self.conv1 = SumConv(in_channels, out_channels, num_bases, hidden_dim=hidden_dim)
-        self.norm1 = nn.BatchNorm1d(out_channels)
+        self.conv1 = SumConv(in_channels, out_channels, num_bases, hidden_dim=hidden_dim, num_layers=num_layers)
+        self.norm1 = nn.LayerNorm(out_channels)
 
-        self.conv2 = SumConv(out_channels, out_channels, num_bases, hidden_dim=hidden_dim)
-        self.norm2 = nn.BatchNorm1d(out_channels)
+        self.conv2 = SumConv(out_channels, out_channels, num_bases, hidden_dim=hidden_dim, num_layers=num_layers)
+        self.norm2 = nn.LayerNorm(out_channels)
 
         self.shortcut = nn.Sequential()
 
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Linear(in_channels, out_channels, bias=False),
-                nn.BatchNorm1d(out_channels)
+                nn.LayerNorm(out_channels)
             )
 
     def forward(self, x: Tensor, layout: Tensor, edge_index: Tensor) -> Tensor:
@@ -114,17 +136,25 @@ class ResNetBasicBlock(nn.Module):
 class ResNetLikePYGGNN(nn.Module):
     CHANNELS = [16, 32, 64]
 
-    def __init__(self, in_channels: int, num_classes: int, k: int = 9, num_bases: int = 8, hidden_dim: int = 8) -> None:
+    def __init__(
+        self,
+        in_channels: int,
+        num_classes: int,
+        k: int = 9,
+        num_bases: int = 8,
+        hidden_dim: int = 8,
+        num_layers: int = 8,
+    ) -> None:
         super().__init__()
         self.k = k
 
-        self.stem_conv = SumConv(in_channels, self.CHANNELS[0], num_bases=num_bases, hidden_dim=hidden_dim)
+        self.stem_conv = SumConv(in_channels, self.CHANNELS[0], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers)
         self.stem_norm = nn.BatchNorm1d(self.CHANNELS[0])
 
         self.stages = nn.ModuleList([
-            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0], num_bases=num_bases, hidden_dim=hidden_dim),
-            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[1], num_bases=num_bases, hidden_dim=hidden_dim),
-            ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2], num_bases=num_bases, hidden_dim=hidden_dim),
+            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers),
+            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[1], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers),
+            ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers),
         ])
 
         self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
