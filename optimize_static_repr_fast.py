@@ -312,15 +312,23 @@ class GaussianRepresentationND(nn.Module):
 
 
 # --- Data Loading Utility ---
-def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=True, size=224):
+def load_medmnist_dataset(dataset_flag="chestmnist", split="train", download=True, size=224,
+                          root=None):
     """Load a full MedMNIST dataset for a given split.
 
     Returns the dataset object, the INFO metadata dict, and the spatial dimension D.
+
+    Args:
+        root: directory to store downloaded dataset files. Defaults to ~/.medmnist.
+              On the cluster pass /vol/miltank/users/hdo/medmnist to keep ~ clean.
     """
     import medmnist as medmnist_module
     info = INFO[dataset_flag]
     DataClass = getattr(medmnist_module, info['python_class'])
-    dataset = DataClass(split=split, download=download, size=size)
+    kwargs = dict(split=split, download=download, size=size)
+    if root is not None:
+        kwargs["root"] = root
+    dataset = DataClass(**kwargs)
     D = 3 if "3d" in dataset_flag.lower() else 2
     return dataset, info, D
 

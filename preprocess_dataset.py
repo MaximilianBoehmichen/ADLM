@@ -79,9 +79,12 @@ def extract_pyg_data(gs: GaussianRepresentationND, y: torch.Tensor, k_graph: int
 def process_split(dataset_flag: str, split: str, output_dir: Path,
                   k_graph: int, params: TrainingConfig, device: torch.device,
                   logging_dir: Path = None,
-                  start_idx: int = 0, end_idx: int = None):
+                  start_idx: int = 0, end_idx: int = None,
+                  medmnist_root: str | None = None):
     """Process all images in one MedMNIST split."""
-    dataset, info, D = load_medmnist_dataset(dataset_flag, split=split)
+    if medmnist_root is not None:
+        Path(medmnist_root).mkdir(parents=True, exist_ok=True)
+    dataset, info, D = load_medmnist_dataset(dataset_flag, split=split, root=medmnist_root)
     assert D == 2, "Only 2D datasets are supported for now."
     task = info["task"]
 
@@ -129,6 +132,9 @@ def main():
                         help="First image index to process (inclusive). Use with --end-idx to shard across jobs.")
     parser.add_argument("--end-idx", type=int, default=None,
                         help="Last image index to process (exclusive). Defaults to end of split.")
+    parser.add_argument("--medmnist-root", type=str, default=None,
+                        help="Directory for medmnist raw data (default: ~/.medmnist). "
+                             "On cluster: /vol/miltank/users/hdo/medmnist")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,7 +153,8 @@ def main():
         if split_logging_dir:
             split_logging_dir.mkdir(parents=True, exist_ok=True)
         process_split(args.dataset, split, output_dir, args.k_graph, params, device, split_logging_dir,
-                      start_idx=args.start_idx, end_idx=args.end_idx)
+                      start_idx=args.start_idx, end_idx=args.end_idx,
+                      medmnist_root=args.medmnist_root)
 
     print("\nDone.")
 

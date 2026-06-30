@@ -11,4 +11,11 @@ dependencies = [
     "numpy>=2.4.4",
     "torch>=2.11.0",
     "torch-geometric>=2.7.0",
+    "torchmetrics>=1.4.0",
+    "wandb>=0.18.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
 ]
