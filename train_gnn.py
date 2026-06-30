@@ -36,7 +36,7 @@ import wandb
 from dataset.gaussian2D import Gaussian2DDataset
 from dataset.pixel_baseline import PixelBaselineDataset
 from dataset.transforms import encode_rotation, to_undirected_transform
-from model.gcn_classifier import ResGCNClassifier
+from model.registry import ARCHS, build_model
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
@@ -70,6 +70,8 @@ def parse_args():
     p.add_argument("--layers", type=int, default=3)
     p.add_argument("--in-dim", type=int, default=None,
                    help="Override input feature dim (default: 7 for Gaussian, 3 for pixel baseline)")
+    p.add_argument("--arch", default="resgcn", choices=ARCHS,
+                   help="GNN architecture to use")
     p.add_argument("--pixel-baseline", action="store_true",
                    help="Use pixel point-cloud dataset instead of Gaussian graphs")
     p.add_argument("--max-samples", type=int, default=None,
@@ -213,10 +215,12 @@ def main():
         in_dim = 3  # [row_norm, col_norm, intensity]
     else:
         in_dim = 5  # Gaussian: scalings(2) + cos/sin(2) + color(1); abs pos stripped, kept in data.pos
-    model = ResGCNClassifier(in_dim=in_dim, hidden_dim=args.hidden, num_classes=num_classes,
-                             num_layers=args.layers, task=task).to(device)
+    model = build_model(args.arch, in_dim=in_dim, hidden_dim=args.hidden,
+                        num_classes=num_classes, num_layers=args.layers,
+                        task=task).to(device)
 
     wandb.config.update({
+        "arch":             args.arch,
         "total_params":     sum(p.numel() for p in model.parameters()),
         "trainable_params": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "model_str":        str(model),

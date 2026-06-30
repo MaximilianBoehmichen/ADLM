@@ -22,4 +22,5 @@ uv run python train_gnn.py \
     --epochs 50 \
     --batch-size 128 \
     --num-workers 4 \
-    --weight-decay 1e-4 
+    --max-samples 1000
+    --arch resgcn
