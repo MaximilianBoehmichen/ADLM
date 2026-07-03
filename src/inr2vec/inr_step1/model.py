@@ -22,7 +22,7 @@ class PositionalEncoder(nn.Module):
     def out_dim(self) -> int:
         return 2 * self.B.shape[1]
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor: # for projection
         proj = x @ self.B
         return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
 
@@ -60,11 +60,11 @@ class RFFPE(PositionalEncoder):
         )
 
 
-class INR(nn.Module):
+class INR(nn.Module): # main architecture
     def __init__(
         self,
         *,
-        pe: type[PositionalEncoder] = MixedPE,
+        pe: type[PositionalEncoder] = RFFPE, 
         hidden_dim: int = 64,
         hidden_layers: int = 1,
         seed: int = 42,

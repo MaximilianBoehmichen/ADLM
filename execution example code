@@ -1,0 +1,41 @@
+import torch
+from typing import List, Tuple
+import medmnist
+
+class MyDataset(torch.utils.data.Dataset):
+    def __init__(self, path_list: List[str], labels: List[int]):
+        self.path_list = path_list  # [gauss_repr0.pt, gauss_repr_1.pt]
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.path_list)
+
+    def __getitem__(self, idx):
+        path = self.path_list[idx]
+        representation = torch.load(path)
+        mus = representation['mus']
+        widths = representation['scalings_inv_']
+        rots = representation['rotations']
+        color = representation['colors'].unsqueeze(1)
+        features = torch.cat((widths, rots, color), dim=-1)
+        label = torch.tensor(self.labels[idx], dtype=torch.float32)
+        knn = representation['knn']
+        return mus, features, knn, label
+
+
+if __name__ == '__main__':
+    # Dominik will save the Gaussian representations of all images into a directory.
+    dir_name = r'C:\Users\nilst\Documents\CMR_GP\logging\2026-05-08_11-29-49-207_2D'
+    # You have to iterate over all files in the directory and get the paths of all .pt files
+    path_list = []  # os.something
+    # Next, get the labels for every Gaussian representation
+    # Perhaps dominik will include the labels into your .pt file, but if not you have to load them from medmnist
+    medmnist_labels = []
+
+    # Initialize dataset
+    dataset = MyDataset(path_list, medmnist_labels)
+    mus, features, knn, label = dataset[0]
+    print('Mus:', mus.shape, mus.dtype)
+    print('Features:', features.shape, features.dtype)
+    print('knn:', knn.shape, knn.dtype)
+    print('label:', label.shape, label.dtype)
