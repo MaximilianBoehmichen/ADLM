@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 import random
 import sys
@@ -89,8 +90,13 @@ def parse_args():
 
 
 def make_loader(ds, batch_size, shuffle, num_workers):
-    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle,
-                      num_workers=num_workers, persistent_workers=True)
+    return DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        persistent_workers=True if sys.platform != "darwin" else False,
+    )
 
 
 def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics,
@@ -257,6 +263,9 @@ def main():
                               weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
 
+    best_model: torch.nn.Module = model
+    best_auc: float = 0.0
+
     for epoch in range(args.epochs):
         tm = EpochMetrics(task, num_classes, device)
         vm = EpochMetrics(task, num_classes, device)
@@ -293,10 +302,17 @@ def main():
               f"val loss {val_out['loss']:.4f} auc {val_out['auroc']:.4f} | "
               f"{t_train + t_val:.1f}s")
 
+        # Only virtual early stopping
+        if val_out['auroc'] > best_auc:
+            best_auc = val_out['auroc']
+            best_model = copy.deepcopy(best_model)
+
     for name, module in model.named_modules():
         if isinstance(module, SumConv):
             g = module.gate.detach()
             print(f"{name:30s} mean|g|={g.abs().mean():.3f}  min={g.min():.3f}  max={g.max():.3f}")
+
+    model = best_model
 
     # Final test metrics. Overall AUC/ACC via the official MedMNIST Evaluator;
     # per-class AUC via torchmetrics (the Evaluator returns only the macro mean).
