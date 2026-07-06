@@ -1,9 +1,11 @@
 import torch
 from torch import Tensor, nn
 from torch_geometric.data import Data
-from torch_geometric.nn import MessagePassing, global_max_pool, global_mean_pool
+from torch_geometric.nn import MessagePassing, global_mean_pool
 from torch_geometric.utils import add_self_loops
 import torch.nn.functional as F
+
+from dataset.transforms import build_rotation
 
 
 def prune_knn_edges(edge_index: Tensor, num_nodes: int, original_k: int = 15, keep_k: int = 8) -> Tensor:
@@ -30,23 +32,36 @@ class SumConv(MessagePassing):
         num_bases: int = 2,
         hidden_dim: int = 8,
         num_layers: int = 8,
-        d: int = 2
+        d: int = 2,
+        mahalanobis: bool = False,
+        rff_features: int = 0,
+        rff_sigma: float = 1.0,
     ) -> None:
         super().__init__(aggr=["sum"])
         self.out_channels = out_channels
         self.num_bases = num_bases
         self.hidden_dim = hidden_dim
-        self.NUM_WEIGHTING_FEATURES = 9 if d == 2 else 0
+        self.d = d
+        self.rotations = 1 if d == 2 else 4
+        self.rot_feat_dim = 2 if d == 2 else d * d
+        self.mahalanobis = mahalanobis
+        self.use_rff = rff_features > 0
+
+        if self.use_rff:
+            self.register_buffer("rff_B", torch.randn(d, rff_features) * rff_sigma)
+
+        pos_dim = 2 * rff_features if self.use_rff else d
+        self.NUM_WEIGHTING_FEATURES = pos_dim + 2 * d + 1 + self.rot_feat_dim
 
         self.weighting = nn.Sequential(
             nn.Linear(self.NUM_WEIGHTING_FEATURES, self.hidden_dim),
-            nn.LayerNorm(hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.LeakyReLU(0.1),
         )
         for _ in range(num_layers - 2):
             self.weighting.extend([
                 nn.Linear(self.hidden_dim, self.hidden_dim),
-                nn.LayerNorm(hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
                 nn.LeakyReLU(0.1),
             ])
 
@@ -55,14 +70,20 @@ class SumConv(MessagePassing):
             nn.LeakyReLU(0.1),
         ])
 
-        for layer in self.weighting:
-            if isinstance(layer, nn.Linear):
-                nn.init.kaiming_uniform_(layer.weight, a=0.1, nonlinearity='leaky_relu')
-
-                if layer.bias is not None:
-                    nn.init.zeros_(layer.bias)
+        self.weighting.apply(self._init_weights)
 
         self.bases = nn.Linear(in_channels, num_bases * out_channels, bias=False)
+
+    def _init_weights(self, m) -> None:
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, a=0.1, nonlinearity="leaky_relu")
+
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+        elif isinstance(m, nn.BatchNorm1d):
+            nn.init.constant_(m.weight, 1.0)
+            nn.init.constant_(m.bias, 0.0)
 
     def forward(self, x: Tensor, layout: Tensor, edge_index: Tensor) -> Tensor:
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))  # Why did we drop them in the preprocessing?
@@ -71,55 +92,99 @@ class SumConv(MessagePassing):
         return self.propagate(edge_index, h=h, layout=layout)
 
     def message(self, h_j: Tensor, layout_i: Tensor, layout_j: Tensor) -> Tensor:
-        pos_j, pos_i = layout_i[:, :2], layout_j[:, :2]
-        scaling_i, scaling_j = layout_i[:, 2:4], layout_j[:, 2:4]
-        theta_i, theta_j = layout_i[:, 4:5], layout_j[:, 4:5]
+        pos_j, pos_i = layout_i[:, :self.d], layout_j[:, :self.d]
+        scaling_i, scaling_j = layout_i[:, self.d:2*self.d], layout_j[:, self.d:2*self.d]
+        rot_i, rot_j = layout_i[:, 2*self.d:2*self.d + self.rotations], layout_j[:, 2*self.d:2*self.d + self.rotations]
 
         rel_pos = pos_j - pos_i
-        dist = rel_pos.norm(dim=-1, keepdim=True)
-        delta_theta = theta_j - theta_i
-        rot_cos = torch.cos(2 * delta_theta)
-        rot_sin = torch.sin(2 * delta_theta)
+        pos_feat = self._fourier(rel_pos) if self.use_rff else rel_pos
+        R_i = build_rotation(rot_i, self.d) if (self.mahalanobis or self.d == 3) else None
+
+        if self.d == 2:
+            delta_theta = rot_j - rot_i
+            rot_feat = torch.cat([torch.cos(2 * delta_theta), torch.sin(2 * delta_theta)], dim=-1)
+
+        else:
+            R_j = build_rotation(rot_j, self.d)
+            rot_feat = (R_j @ R_i.mT).flatten(1)
+
+        if self.mahalanobis:
+            white = torch.einsum("eij,ej->ei", R_i.mT, rel_pos) / scaling_i.clamp(min=1e-6)
+            dist = white.norm(dim=-1, keepdim=True)
+
+        else:
+            dist = rel_pos.norm(dim=-1, keepdim=True)
 
         weighting_features = torch.cat([
-                rel_pos,
+                pos_feat,
                 dist,
                 scaling_i,
                 scaling_j,
-                rot_cos,
-                rot_sin,
+                rot_feat,
             ],
             dim=-1,
         )
         coeff = self.weighting(weighting_features)
-
         h_j = h_j.view(-1, self.num_bases, self.out_channels)
+
         return torch.einsum("eb,ebo->eo", coeff, h_j)
 
     def update(self, aggr_out: Tensor) -> Tensor:
         return aggr_out
 
+    def _fourier(self, x):
+        proj = 2 * torch.pi * x @ self.rff_B
+
+        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
 
 class ResNetBasicBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, num_bases: int = 8, hidden_dim: int = 8, num_layers: int = 3):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_bases: int = 8,
+        hidden_dim: int = 8,
+        num_layers: int = 3,
+        d: int = 2,
+        mahalanobis: bool = False,
+        rff_features: int = 0,
+        rff_sigma: float = 1.0,
+    ):
         super().__init__()
 
-        self.conv1 = SumConv(in_channels, out_channels, num_bases, hidden_dim=hidden_dim, num_layers=num_layers)
+        self.conv1 = SumConv(
+            in_channels,
+            out_channels,
+            num_bases,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            d=d,
+            mahalanobis=mahalanobis,
+            rff_features=rff_features,
+            rff_sigma=rff_sigma,
+        )
         self.norm1 = nn.LayerNorm(out_channels)
 
-        self.conv2 = SumConv(out_channels, out_channels, num_bases, hidden_dim=hidden_dim, num_layers=num_layers)
+        self.conv2 = SumConv(
+            out_channels,
+            out_channels,
+            num_bases,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            d=d,
+            mahalanobis=mahalanobis,
+            rff_features=rff_features,
+            rff_sigma=rff_sigma,
+        )
         self.norm2 = nn.LayerNorm(out_channels)
 
-        self.shortcut = nn.Sequential()
-
-        if in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Linear(in_channels, out_channels, bias=False),
-                nn.LayerNorm(out_channels)
-            )
+        self.pad = (out_channels - in_channels) // 2
 
     def forward(self, x: Tensor, layout: Tensor, edge_index: Tensor) -> Tensor:
-        identity = self.shortcut(x)
+        shortcut = x
+        if self.pad:
+            shortcut = F.pad(shortcut, (self.pad, self.pad))
 
         out = self.conv1(x, layout, edge_index)
         out = self.norm1(out)
@@ -128,9 +193,7 @@ class ResNetBasicBlock(nn.Module):
         out = self.conv2(out, layout, edge_index)
         out = self.norm2(out)
 
-        out = out + identity
-
-        return F.relu(out)
+        return F.relu(out + shortcut)
 
 
 class ResNetLikePYGGNN(nn.Module):
@@ -144,20 +207,64 @@ class ResNetLikePYGGNN(nn.Module):
         num_bases: int = 8,
         hidden_dim: int = 8,
         num_layers: int = 8,
+        d: int = 2,
+        mahalanobis: bool = False,
+        rff_features: int = 0,
+        rff_sigma: float = 1.0,
     ) -> None:
         super().__init__()
         self.k = k
 
-        self.stem_conv = SumConv(in_channels, self.CHANNELS[0], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers)
-        self.stem_norm = nn.BatchNorm1d(self.CHANNELS[0])
+        self.stem_conv = SumConv(
+            in_channels,
+            self.CHANNELS[0],
+            num_bases=num_bases,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            d=d,
+            mahalanobis=mahalanobis,
+            rff_features=rff_features,
+            rff_sigma=rff_sigma,
+        )
+        self.stem_norm = nn.LayerNorm(self.CHANNELS[0])
 
         self.stages = nn.ModuleList([
-            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[0], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers),
-            ResNetBasicBlock(self.CHANNELS[0], self.CHANNELS[1], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers),
-            ResNetBasicBlock(self.CHANNELS[1], self.CHANNELS[2], num_bases=num_bases, hidden_dim=hidden_dim, num_layers=num_layers),
+            ResNetBasicBlock(
+                self.CHANNELS[0],
+                self.CHANNELS[0],
+                num_bases=num_bases,
+                hidden_dim=hidden_dim,
+                num_layers=num_layers,
+                d=d,
+                mahalanobis=mahalanobis,
+                rff_features=rff_features,
+                rff_sigma=rff_sigma,
+            ),
+            ResNetBasicBlock(
+                self.CHANNELS[0],
+                self.CHANNELS[1],
+                num_bases=num_bases,
+                hidden_dim=hidden_dim,
+                num_layers=num_layers,
+                d=d,
+                mahalanobis=mahalanobis,
+                rff_features=rff_features,
+                rff_sigma=rff_sigma,
+            ),
+            ResNetBasicBlock(
+                self.CHANNELS[1],
+                self.CHANNELS[2],
+                num_bases=num_bases,
+                hidden_dim=hidden_dim,
+                num_layers=num_layers,
+                d=d,
+                mahalanobis=mahalanobis,
+                rff_features=rff_features,
+                rff_sigma=rff_sigma,
+            ),
         ])
 
-        self.head = nn.Linear(self.CHANNELS[-1] * 2, num_classes)
+        self.head = nn.Linear(self.CHANNELS[-1], num_classes)
 
     def forward(self, data: Data) -> Tensor:
         x, layout, edge_index, batch = data.x, data.layout, data.edge_index, data.batch
@@ -181,5 +288,6 @@ class ResNetLikePYGGNN(nn.Module):
         for block in self.stages:
             x = block(x, layout, edge_index)
 
-        x = torch.cat([global_mean_pool(x, batch), global_max_pool(x, batch)], dim=-1)
+        x = global_mean_pool(x, batch)
+
         return self.head(x)

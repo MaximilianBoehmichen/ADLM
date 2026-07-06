@@ -20,9 +20,7 @@ from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import summary
 from torch_geometric.transforms import Compose
-from torch_geometric.utils import dropout_edge
 from tqdm import tqdm
-
 
 ROOT = Path(__file__).parent
 SRC = ROOT / "src"
@@ -36,10 +34,10 @@ if sys.platform == "darwin":
 import wandb
 from dataset.gaussian2D import Gaussian2DDataset
 from dataset.transforms import (
-    FeatureNormalization,
+    BuildKNNGraph, FeatureNormalization,
     encode_rotation, extract_layout,
 )
-from model.gnn_another import ResNetLikePYGGNN, SumConv
+from model.gnn_another import ResNetLikePYGGNN
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
@@ -59,22 +57,21 @@ def set_seed(seed: int):
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train GCN classifier on Gaussian graphs.")
-    p.add_argument("--dataset", default="chestmnist",
-                   choices=["pneumoniamnist", "chestmnist", "chestmnistNEW"])
+    p.add_argument("--dataset", default="chestmnist")
     p.add_argument("--data-root", default="data",
                    help="Parent dir containing {dataset}/{split}/*.pt")
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--weight-decay", type=float, default=1e-3,
+    p.add_argument("--weight-decay", type=float, default=1e-4,
                    help="AdamW weight decay (L2 regularization)")
-    p.add_argument("--dropout", type=float, default=0.0,
-                   help="Node feature dropout probability after each block")
-    p.add_argument("--drop-edge", type=float, default=0.0,
-                   help="DropEdge probability during training (0 = disabled)")
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--layers", type=int, default=3)
     p.add_argument("--num-bases", type=int, default=8)
+    p.add_argument("--neighbor-distance", default="l2", choices=["l2", "mahalanobis"])
+    p.add_argument("--flow-direction", default="propagate_to", choices=["propagate_to", "propagate_from"])
+    p.add_argument("--rff-features", type=int, default=0)
+    p.add_argument("--rff-sigma", type=float, default=1.0)
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap dataset size (e.g. 32 to overfit a single batch)")
     p.add_argument("--in-memory", action="store_true",
@@ -100,7 +97,7 @@ def make_loader(ds, batch_size, shuffle, num_workers):
 
 
 def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics,
-                    task: str, drop_edge_p: float = 0.0) -> dict:
+                    task: str) -> dict:
     model.train()
     n_batches = 0
     t_data, t_step = 0.0, 0.0
@@ -110,11 +107,7 @@ def train_one_epoch(model, loader, loss_fn, optim, device, metrics: EpochMetrics
         t_data += time.perf_counter() - t0
         t0_step = time.perf_counter()
         batch = batch.to(device)
-        if drop_edge_p > 0:
-            batch.edge_index, edge_mask = dropout_edge(batch.edge_index,
-                                                       p=drop_edge_p, training=True)
-            if batch.edge_attr is not None:
-                batch.edge_attr = batch.edge_attr[edge_mask]
+
         optim.zero_grad()
         logits = model(batch)
         targets = batch.y
@@ -174,23 +167,34 @@ def main():
 
     wandb.init(project=args.wandb_project, entity=args.wandb_entity,
                mode=args.wandb_mode, config={**vars(args), "device": str(device),
-                                              "in_memory_resolved": in_memory})
+                                             "in_memory_resolved": in_memory})
+
+    is_3d = "3d" in args.dataset.lower()
+    spatial_dim = 3 if is_3d else 2
+    rotation_dim = 4 if is_3d else 1
+    layout_dim = 2 * spatial_dim + rotation_dim
+    encoded_rot = 2 if not is_3d else rotation_dim
+    expected_in_dim = 2 * spatial_dim + encoded_rot + 1
+
 
     task_info = get_task_info(args.dataset)
     task = task_info["task"]
     num_classes = task_info["num_classes"]
     class_names = task_info["class_names"]
 
-    transforms = Compose([extract_layout, encode_rotation])
+    knn_graph = BuildKNNGraph(metric=args.neighbor_distance, direction=args.flow_direction)
+
+    pre = [extract_layout, knn_graph] + ([] if is_3d else [encode_rotation])
+    transforms = Compose(pre)
     data_root = Path(args.data_root) / args.dataset
 
     t0 = time.perf_counter()
     train_ds = Gaussian2DDataset(root=data_root, split="train",
-                                  transforms=transforms, in_memory=in_memory)
-    val_ds = Gaussian2DDataset(root=data_root, split="val",
-                                transforms=transforms, in_memory=in_memory)
-    test_ds = Gaussian2DDataset(root=data_root, split="test",
                                  transforms=transforms, in_memory=in_memory)
+    val_ds = Gaussian2DDataset(root=data_root, split="val",
+                               transforms=transforms, in_memory=in_memory)
+    test_ds = Gaussian2DDataset(root=data_root, split="test",
+                                transforms=transforms, in_memory=in_memory)
     t_load = time.perf_counter() - t0
     print(f"Data loaded in {t_load:.1f}s "
           f"(train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}, "
@@ -205,16 +209,17 @@ def main():
 
     stats_path = ROOT / "cache" / args.dataset / "feature_stats.pt"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
-    expected_in_dim = 7
+
     cache_valid = False
-    if stats_path.exists() and args.max_samples is None:
-        saved = torch.load(stats_path, weights_only=True)
-        mean, std = saved["mean"], saved["std"]
-        if mean.shape[0] == expected_in_dim:
-            cache_valid = True
-            print(f"Loaded cached feature stats from {stats_path}")
-        else:
-            print(f"Stale cache (dim {mean.shape[0]} != {expected_in_dim}), recomputing...")
+    # always recompute
+    # if stats_path.exists() and args.max_samples is None:
+    #     saved = torch.load(stats_path, weights_only=True)
+    #     mean, std = saved["mean"], saved["std"]
+    #     if mean.shape[0] == expected_in_dim:
+    #         cache_valid = True
+    #         print(f"Loaded cached feature stats from {stats_path}")
+    #     else:
+    #         print(f"Stale cache (dim {mean.shape[0]} != {expected_in_dim}), recomputing...")
     if not cache_valid:
         print("Computing feature statistics from training set...")
         mean, std = FeatureNormalization.compute_stats(train_ds)
@@ -232,9 +237,14 @@ def main():
     model = ResNetLikePYGGNN(
         in_channels=expected_in_dim,
         num_classes=num_classes,
+        k=9 if spatial_dim == 2 else 27,
         num_bases=args.num_bases,
         hidden_dim=args.hidden,
         num_layers=args.layers,
+        d=spatial_dim,
+        mahalanobis=True if args.neighbor_distance == "mahalanobis" else False,
+        rff_features=args.rff_features,
+        rff_sigma=args.rff_sigma,
     ).to(device)
 
     N, K = 836, 15
@@ -243,8 +253,8 @@ def main():
     sample = Batch.from_data_list([
         Data(
             x=torch.randn(N, expected_in_dim, device=device),
-            pos=torch.rand(N, 2, device=device),
-            layout=torch.randn(N, 5, device=device),
+            pos=torch.rand(N, spatial_dim, device=device),
+            layout=torch.randn(N, layout_dim, device=device),
             edge_index=torch.stack([src, dst]),
             y=torch.tensor([0], device=device),
         )
@@ -257,12 +267,16 @@ def main():
         cache_path = ROOT / "cache" / args.dataset / "pos_weight.pt"
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         pos_weight = compute_or_load_pos_weight(train_ds, num_labels=num_classes,
-                                                 cache_path=cache_path)
+                                                cache_path=cache_path)
 
     loss_fn = build_loss(task, pos_weight, device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.lr,
                               weight_decay=args.weight_decay)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=args.epochs)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optim,
+        T_max=args.epochs,
+        eta_min=1e-6,
+    )
 
     best_model: torch.nn.Module = model
     best_auc: float = 0.0
@@ -273,7 +287,7 @@ def main():
 
         t0 = time.perf_counter()
         iter_times = train_one_epoch(model, train_loader, loss_fn, optim, device,
-                                     tm, task, drop_edge_p=args.drop_edge)
+                                     tm, task)
         t_train = time.perf_counter() - t0
 
         t0 = time.perf_counter()
@@ -307,11 +321,6 @@ def main():
         if val_out['auroc'] > best_auc:
             best_auc = val_out['auroc']
             best_model = copy.deepcopy(best_model)
-
-    for name, module in model.named_modules():
-        if isinstance(module, SumConv):
-            g = module.gate.detach()
-            print(f"{name:30s} mean|g|={g.abs().mean():.3f}  min={g.min():.3f}  max={g.max():.3f}")
 
     model = best_model
 

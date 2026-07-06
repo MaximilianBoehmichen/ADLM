@@ -24,9 +24,12 @@ def pos_normalization(
     x = data.x
     assert pos is not None and x is not None
 
-    data.pos = (pos / img_size) * (max_val - min_val) + min_val
+    dim = pos.shape[1]
+    scale = (max_val - min_val) / img_size
 
-    x[:, :2] = (x[:, :2] / img_size) * (max_val - min_val) + min_val
+    data.pos = pos * scale + min_val
+    x[:, :dim] = x[:, :dim] * scale + min_val
+    x[:, dim:2 * dim] = x[:, dim:2 * dim] * scale
     data.x = x
 
     return data
@@ -159,5 +162,64 @@ def extract_layout(data: Data) -> Data:
     x = data.x
     assert x is not None
 
-    data.layout = x[:, :5].clone()
+    data.layout = x[:, :-1].clone()
     return data
+
+
+def build_rotation(rot, dim):
+    """Batched rotation matrices from a 2D angle or a 3D quaternion (wxyz)."""
+    if dim == 2:
+        c, s = torch.cos(rot[:, 0]), torch.sin(rot[:, 0])
+
+        return torch.stack([c, -s, s, c], -1).view(-1, 2, 2)
+
+    w, x, y, z = torch.nn.functional.normalize(rot, dim=1).unbind(-1)
+
+    return torch.stack([
+        1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y),
+        2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
+        2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y),
+    ], -1).view(-1, 3, 3)
+
+
+class BuildKNNGraph:
+    """Recompute edge_index as a KNN graph with either L2 or mahalanobis neighbors.
+
+    Also can build a reverse graph where the in degree is fixed.
+    """
+
+    def __init__(self, metric="l2", direction="propagate_to", eps=1e-6):
+        assert metric in {"l2", "mahalanobis"}
+        assert direction in {"propagate_to", "propagate_from"}
+        self.metric = metric
+        self.direction = direction
+        self.eps = eps
+
+    def __call__(self, data):
+        if self.metric == "l2" and self.direction == "propagate_to":
+            return data  # already the stored graph
+
+        pos, x = data.pos, data.x
+        n, dim = pos.shape
+        k = min(data.edge_index.size(1) // n, n - 1)
+
+        if self.metric == "l2":
+            d2 = torch.cdist(pos, pos).square()
+
+        else:
+            s = x[:, dim:2 * dim]
+            r = build_rotation(x[:, 2 * dim:2 * dim + (1 if dim == 2 else 4)], dim)
+            diff = pos[None] - pos[:, None]
+            white = torch.einsum("ied,ije->ijd", r, diff) / s.clamp(min=self.eps)[:, None]
+            d2 = white.square().sum(-1)
+
+        d2.fill_diagonal_(float("inf"))
+
+        # propagate_from = pick per column instead of per row = same topk on the transpose
+        mat = d2 if self.direction == "propagate_to" else d2.t()
+        neigh = mat.topk(k, dim=1, largest=False).indices.reshape(-1)
+        center = torch.arange(n).repeat_interleave(k)
+        src, dst = (center, neigh) if self.direction == "propagate_to" else (neigh, center)
+        data.edge_index = torch.stack([src, dst])
+
+        return data
