@@ -50,7 +50,7 @@ class SumConv(MessagePassing):
         self.rot_feat_dim = d * d if rotate else 2 * self.rotations
 
         if self.use_rff:
-            self.register_buffer("rff_B", torch.randn(d, rff_features) * rff_sigma)
+            self.register_buffer("rff_B", torch.randn(d, rff_features, generator=torch.Generator().manual_seed(848577)) * rff_sigma)
 
         pos_dim = 2 * rff_features if self.use_rff else d
         self.NUM_WEIGHTING_FEATURES = pos_dim + 2 * d + 1 + self.rot_feat_dim
