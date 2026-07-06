@@ -72,6 +72,7 @@ def parse_args():
     p.add_argument("--flow-direction", default="propagate_to", choices=["propagate_to", "propagate_from"])
     p.add_argument("--rff-features", type=int, default=0)
     p.add_argument("--rff-sigma", type=float, default=1.0)
+    p.add_argument("--rotate-frame", action="store_true")
     p.add_argument("--max-samples", type=int, default=None,
                    help="Cap dataset size (e.g. 32 to overfit a single batch)")
     p.add_argument("--in-memory", action="store_true",
@@ -186,15 +187,15 @@ def main():
 
     pre = [extract_layout, knn_graph] + ([] if is_3d else [encode_rotation])
     transforms = Compose(pre)
+    stats_transforms = Compose([encode_rotation]) if not is_3d else None
+
     data_root = Path(args.data_root) / args.dataset
 
     t0 = time.perf_counter()
-    train_ds = Gaussian2DDataset(root=data_root, split="train",
-                                 transforms=transforms, in_memory=in_memory)
-    val_ds = Gaussian2DDataset(root=data_root, split="val",
-                               transforms=transforms, in_memory=in_memory)
-    test_ds = Gaussian2DDataset(root=data_root, split="test",
-                                transforms=transforms, in_memory=in_memory)
+    stats_ds = Gaussian2DDataset(root=data_root, split="train", transforms=stats_transforms, in_memory=False)
+    train_ds = Gaussian2DDataset(root=data_root, split="train", transforms=transforms, in_memory=in_memory)
+    val_ds = Gaussian2DDataset(root=data_root, split="val", transforms=transforms, in_memory=in_memory)
+    test_ds = Gaussian2DDataset(root=data_root, split="test", transforms=transforms, in_memory=in_memory)
     t_load = time.perf_counter() - t0
     print(f"Data loaded in {t_load:.1f}s "
           f"(train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}, "
@@ -222,7 +223,7 @@ def main():
     #         print(f"Stale cache (dim {mean.shape[0]} != {expected_in_dim}), recomputing...")
     if not cache_valid:
         print("Computing feature statistics from training set...")
-        mean, std = FeatureNormalization.compute_stats(train_ds)
+        mean, std = FeatureNormalization.compute_stats(stats_ds)
         if args.max_samples is None:
             torch.save({"mean": mean, "std": std}, stats_path)
     feat_norm = FeatureNormalization(mean, std)
@@ -245,6 +246,7 @@ def main():
         mahalanobis=True if args.neighbor_distance == "mahalanobis" else False,
         rff_features=args.rff_features,
         rff_sigma=args.rff_sigma,
+        rotate=args.rotate_frame,
     ).to(device)
 
     N, K = 836, 15
@@ -320,7 +322,7 @@ def main():
         # Only virtual early stopping
         if val_out['auroc'] > best_auc:
             best_auc = val_out['auroc']
-            best_model = copy.deepcopy(best_model)
+            best_model = copy.deepcopy(model)
 
     model = best_model
 

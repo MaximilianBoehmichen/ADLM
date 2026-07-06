@@ -36,6 +36,7 @@ class SumConv(MessagePassing):
         mahalanobis: bool = False,
         rff_features: int = 0,
         rff_sigma: float = 1.0,
+        rotate: bool = False,
     ) -> None:
         super().__init__(aggr=["sum"])
         self.out_channels = out_channels
@@ -43,9 +44,10 @@ class SumConv(MessagePassing):
         self.hidden_dim = hidden_dim
         self.d = d
         self.rotations = 1 if d == 2 else 4
-        self.rot_feat_dim = 2 if d == 2 else d * d
         self.mahalanobis = mahalanobis
         self.use_rff = rff_features > 0
+        self.rotate = rotate
+        self.rot_feat_dim = d * d if rotate else 2 * self.rotations
 
         if self.use_rff:
             self.register_buffer("rff_B", torch.randn(d, rff_features) * rff_sigma)
@@ -92,28 +94,31 @@ class SumConv(MessagePassing):
         return self.propagate(edge_index, h=h, layout=layout)
 
     def message(self, h_j: Tensor, layout_i: Tensor, layout_j: Tensor) -> Tensor:
-        pos_j, pos_i = layout_i[:, :self.d], layout_j[:, :self.d]
+        pos_i, pos_j = layout_i[:, :self.d], layout_j[:, :self.d]
         scaling_i, scaling_j = layout_i[:, self.d:2*self.d], layout_j[:, self.d:2*self.d]
         rot_i, rot_j = layout_i[:, 2*self.d:2*self.d + self.rotations], layout_j[:, 2*self.d:2*self.d + self.rotations]
 
         rel_pos = pos_j - pos_i
+        R_i = build_rotation(rot_i, self.d) if (self.rotate or self.mahalanobis) else None
+
+        if self.rotate:
+            rel_pos = torch.einsum("eij,ej->ei", R_i.mT, rel_pos)
+
         pos_feat = self._fourier(rel_pos) if self.use_rff else rel_pos
-        R_i = build_rotation(rot_i, self.d) if (self.mahalanobis or self.d == 3) else None
-
-        if self.d == 2:
-            delta_theta = rot_j - rot_i
-            rot_feat = torch.cat([torch.cos(2 * delta_theta), torch.sin(2 * delta_theta)], dim=-1)
-
-        else:
-            R_j = build_rotation(rot_j, self.d)
-            rot_feat = (R_j @ R_i.mT).flatten(1)
 
         if self.mahalanobis:
-            white = torch.einsum("eij,ej->ei", R_i.mT, rel_pos) / scaling_i.clamp(min=1e-6)
-            dist = white.norm(dim=-1, keepdim=True)
+            frame = rel_pos if self.rotate else torch.einsum("eij,ej->ei", R_i.mT, rel_pos)
+            dist = (frame / scaling_i.clamp(min=1e-6)).norm(dim=-1, keepdim=True)
 
         else:
             dist = rel_pos.norm(dim=-1, keepdim=True)
+
+        if self.rotate:
+            R_j = build_rotation(rot_j, self.d)
+            rot_feat = (R_i.mT @ R_j).flatten(1)
+        else:
+            delta = rot_j - rot_i
+            rot_feat = torch.cat([torch.cos(2 * delta), torch.sin(2 * delta)], dim=-1)
 
         weighting_features = torch.cat([
                 pos_feat,
@@ -150,6 +155,7 @@ class ResNetBasicBlock(nn.Module):
         mahalanobis: bool = False,
         rff_features: int = 0,
         rff_sigma: float = 1.0,
+        rotate: bool = False,
     ):
         super().__init__()
 
@@ -163,6 +169,7 @@ class ResNetBasicBlock(nn.Module):
             mahalanobis=mahalanobis,
             rff_features=rff_features,
             rff_sigma=rff_sigma,
+            rotate=rotate,
         )
         self.norm1 = nn.LayerNorm(out_channels)
 
@@ -176,6 +183,7 @@ class ResNetBasicBlock(nn.Module):
             mahalanobis=mahalanobis,
             rff_features=rff_features,
             rff_sigma=rff_sigma,
+            rotate=rotate,
         )
         self.norm2 = nn.LayerNorm(out_channels)
 
@@ -211,20 +219,26 @@ class ResNetLikePYGGNN(nn.Module):
         mahalanobis: bool = False,
         rff_features: int = 0,
         rff_sigma: float = 1.0,
+        rotate: bool = False,
     ) -> None:
         super().__init__()
         self.k = k
 
+        sumconv_kwargs = {
+            "num_bases": num_bases,
+            "hidden_dim": hidden_dim,
+            "num_layers": num_layers,
+            "d": d,
+            "mahalanobis": mahalanobis,
+            "rff_features": rff_features,
+            "rff_sigma": rff_sigma,
+            "rotate": rotate,
+        }
+
         self.stem_conv = SumConv(
             in_channels,
             self.CHANNELS[0],
-            num_bases=num_bases,
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            d=d,
-            mahalanobis=mahalanobis,
-            rff_features=rff_features,
-            rff_sigma=rff_sigma,
+            **sumconv_kwargs,
         )
         self.stem_norm = nn.LayerNorm(self.CHANNELS[0])
 
@@ -232,35 +246,17 @@ class ResNetLikePYGGNN(nn.Module):
             ResNetBasicBlock(
                 self.CHANNELS[0],
                 self.CHANNELS[0],
-                num_bases=num_bases,
-                hidden_dim=hidden_dim,
-                num_layers=num_layers,
-                d=d,
-                mahalanobis=mahalanobis,
-                rff_features=rff_features,
-                rff_sigma=rff_sigma,
+                **sumconv_kwargs,
             ),
             ResNetBasicBlock(
                 self.CHANNELS[0],
                 self.CHANNELS[1],
-                num_bases=num_bases,
-                hidden_dim=hidden_dim,
-                num_layers=num_layers,
-                d=d,
-                mahalanobis=mahalanobis,
-                rff_features=rff_features,
-                rff_sigma=rff_sigma,
+                **sumconv_kwargs,
             ),
             ResNetBasicBlock(
                 self.CHANNELS[1],
                 self.CHANNELS[2],
-                num_bases=num_bases,
-                hidden_dim=hidden_dim,
-                num_layers=num_layers,
-                d=d,
-                mahalanobis=mahalanobis,
-                rff_features=rff_features,
-                rff_sigma=rff_sigma,
+                **sumconv_kwargs,
             ),
         ])
 
