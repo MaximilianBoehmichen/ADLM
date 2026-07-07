@@ -60,6 +60,7 @@ class SumConv(MessagePassing):
             nn.BatchNorm1d(hidden_dim),
             nn.LeakyReLU(0.1),
         )
+
         for _ in range(num_layers - 2):
             self.weighting.extend([
                 nn.Linear(self.hidden_dim, self.hidden_dim),
