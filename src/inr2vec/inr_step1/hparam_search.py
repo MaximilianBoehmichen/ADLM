@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import random
+from dataclasses import asdict
 from pathlib import Path
 
 import medmnist
@@ -61,13 +62,38 @@ def _count_params(model: torch.nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
 
 
+def _gpu_metrics(device: torch.device) -> dict[str, float]:
+    if device.type != "cuda":
+        return {}
+    idx = device.index if device.index is not None else torch.cuda.current_device()
+    metrics = {
+        "gpu/mem_peak_gb": torch.cuda.max_memory_allocated(idx) / 1e9,
+        "gpu/mem_reserved_gb": torch.cuda.memory_reserved(idx) / 1e9,
+    }
+    torch.cuda.reset_peak_memory_stats(idx)
+    return metrics
+
+
 def grid_search(config: Config) -> None:
     """Fit every in-budget hparam configuration.
 
     Args:
         config: CLI configuration.
     """
+    import wandb as _wandb
+
     device = config.device
+
+    if config.wandb:
+        _wandb.init(
+            project=config.wandb_project,
+            tags=list(config.wandb_tags),
+            config=asdict(config),
+        )
+
+    if device.type == "cuda":
+        idx = device.index if device.index is not None else torch.cuda.current_device()
+        torch.cuda.reset_peak_memory_stats(idx)
 
     dataset = load_split(config.dataset, split="test", size=config.image_size)
     coords = make_coord_grid(config.image_size, config.image_size, device)
@@ -88,7 +114,7 @@ def grid_search(config: Config) -> None:
         f"{config.epochs} steps/image | {len(combos)} configs"
     )
 
-    for hparams in tqdm(combos[config.start:config.end], desc="configs"):
+    for config_idx, hparams in enumerate(tqdm(combos[config.start:config.end], desc="configs")):
         # Retain Max's original filtering logic; it will pass cleanly for our current RFFPE setup
         if hparams["pe"] is MixedPE:
             if (
@@ -133,6 +159,16 @@ def grid_search(config: Config) -> None:
             f"done | mean PSNR {mean_psnr:6.3f} dB | {n_params:5d} params | {hparams}"
         )
 
+        if config.wandb:
+            log: dict = {
+                "config_idx": config_idx,
+                "mean_psnr": mean_psnr,
+                "n_params": n_params,
+                **{f"hp/{k}": (v.__name__ if callable(v) else v) for k, v in hparams.items()},
+                **_gpu_metrics(device),
+            }
+            _wandb.log(log)
+
     results.sort(key=lambda r: r[0], reverse=True)
     print(
         f"\n=== Ranking by mean PSNR "
@@ -140,6 +176,9 @@ def grid_search(config: Config) -> None:
     )
     for rank, (mean_psnr, n_params, hparams) in enumerate(results, start=1):
         print(f"{rank:3d}. {mean_psnr:6.3f} dB | {n_params:5d} params | {hparams}")
+
+    if config.wandb:
+        _wandb.finish()
 
 
 def make_coord_grid(h: int, w: int, device) -> torch.Tensor:

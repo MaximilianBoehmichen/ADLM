@@ -27,6 +27,8 @@ class Config:
     run_name: str = field(
         default_factory=lambda: datetime.now().strftime("%Y%m%d-%H%M%S")
     )
+    batch_size: int = 16
+    accum_batch_size: int = 128
     wandb: bool = False
     wandb_project: str = "ADLM-inr_step1"
     wandb_tags: tuple[str, ...] = ()
@@ -149,6 +151,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
         num_workers=args.num_workers,
         image_size=args.image_size,
         run_name=run_name,
+        batch_size=args.batch_size,
+        accum_batch_size=args.accum_batch_size,
         wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_tags=tuple(args.wandb_tags),
