@@ -312,6 +312,9 @@ def main():
         log["time/epoch_s"] = t_train + t_val
         log["time/iter_data_ms"] = iter_times["data_ms"]
         log["time/iter_step_ms"] = iter_times["step_ms"]
+        if device.type == "cuda":
+            log["gpu/mem_peak_gb"] = torch.cuda.max_memory_allocated(device) / 1e9
+            torch.cuda.reset_peak_stats(device)
         wandb.log(log)
         print(f"epoch {epoch:3d} | "
               f"train loss {train_out['loss']:.4f} auc {train_out['auroc']:.4f} | "
