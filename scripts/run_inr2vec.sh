@@ -24,6 +24,7 @@ nvidia-smi || true
 
 module load python/uv
 uv sync
+export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 IS_3D=0
 [[ "$DATASET" == *"3d"* ]] && IS_3D=1
