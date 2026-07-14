@@ -60,7 +60,7 @@ def evaluate(
     n_batches = 0
 
     for images, labels in loader:
-        labels = labels.to(device)
+        labels = labels.to(device).squeeze(1).long()
         logits = model(images.to(device))
         loss_sum += criterion(logits, labels).item()
         n_batches += 1
