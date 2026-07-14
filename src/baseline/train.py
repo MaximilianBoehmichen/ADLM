@@ -321,7 +321,7 @@ def train_one_epoch(
     pbar = tqdm(loader, desc=f"epoch {epoch}")
     for step, (images, labels) in enumerate(pbar, start=1):
         images = images.to(device)
-        labels = labels.to(device).squeeze(1)
+        labels = labels.to(device).squeeze(1).long()
 
         logits = model(images)
         loss = loss_function(logits, labels)
