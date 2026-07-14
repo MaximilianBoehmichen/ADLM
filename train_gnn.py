@@ -38,6 +38,7 @@ from dataset.transforms import (
     encode_rotation, extract_layout,
 )
 from model.gnn_another import ResNetLikePYGGNN
+from model.gnn_other import ResNetLikeGNN
 from training.metrics import EpochMetrics, run_medmnist_evaluator
 from training.task_info import (
     build_loss,
@@ -65,6 +66,8 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4,
                    help="AdamW weight decay (L2 regularization)")
+    p.add_argument("--model", default="pyg", choices=["pyg", "simple"],
+                   help="Model architecture: 'pyg' (SumConv basis-decomposed) or 'simple' (KNNConv)")
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--layers", type=int, default=3)
     p.add_argument("--num-bases", type=int, default=8)
@@ -234,19 +237,27 @@ def main():
     val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers)
 
-    model = ResNetLikePYGGNN(
-        in_channels=expected_in_dim,
-        num_classes=num_classes,
-        k=9 if spatial_dim == 2 else 27,
-        num_bases=args.num_bases,
-        hidden_dim=args.hidden,
-        num_layers=args.layers,
-        d=spatial_dim,
-        mahalanobis=True if args.neighbor_distance == "mahalanobis" else False,
-        rff_features=args.rff_features,
-        rff_sigma=args.rff_sigma,
-        rotate=args.rotate_frame,
-    ).to(device)
+    k = 9 if spatial_dim == 2 else 27
+    if args.model == "pyg":
+        model = ResNetLikePYGGNN(
+            in_channels=expected_in_dim,
+            num_classes=num_classes,
+            k=k,
+            num_bases=args.num_bases,
+            hidden_dim=args.hidden,
+            num_layers=args.layers,
+            d=spatial_dim,
+            mahalanobis=True if args.neighbor_distance == "mahalanobis" else False,
+            rff_features=args.rff_features,
+            rff_sigma=args.rff_sigma,
+            rotate=args.rotate_frame,
+        ).to(device)
+    else:
+        model = ResNetLikeGNN(
+            in_channels=expected_in_dim,
+            num_classes=num_classes,
+            k=k,
+        ).to(device)
 
     N, K = 836, 15
     src = torch.arange(N, device=device).repeat_interleave(K)
