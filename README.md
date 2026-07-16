@@ -342,4 +342,4 @@ below; the rest hold work that only exists on the branch.
 
 ## Disclosure
 
-Parts of the source code and much of the scripts and plots were created responsibly with Claude Code.
+Parts of the source code, and much of the scripts, plots, and this README were created responsibly with Claude Code.
