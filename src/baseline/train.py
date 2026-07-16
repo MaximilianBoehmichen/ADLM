@@ -16,7 +16,6 @@ from baseline.data import DatasetInfo, Loaders
 from baseline.evaluation import evaluate
 from baseline.models import BaseModel
 from baseline.models.base import CheckpointMetrics
-from baseline.plot import save_roc_plot
 
 
 class _WandbLogger:
@@ -200,6 +199,7 @@ def train(
                 device,
                 epoch,
                 config,
+                dataset_info,
             )
             val = evaluate(
                 model,
@@ -313,6 +313,7 @@ def train_one_epoch(
     device: torch.device,
     epoch: int,
     config: Config,
+    dataset_info: DatasetInfo,
 ) -> float:
     model.train()
     running_loss = 0.0
@@ -322,7 +323,8 @@ def train_one_epoch(
     pbar = tqdm(loader, desc=f"epoch {epoch}")
     for step, (images, labels) in enumerate(pbar, start=1):
         images = images.to(device)
-        labels = labels.to(device).reshape(-1).long()
+        labels = labels.to(device)
+        labels = labels.float() if dataset_info.is_multilabel else labels.reshape(-1).long()
 
         logits = model(images)
         loss = loss_function(logits, labels)
