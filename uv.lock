@@ -13,7 +13,7 @@ resolution-markers = [
 [[package]]
 name = "adlm"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "faiss-cpu", marker = "sys_platform == 'darwin'" },
     { name = "faiss-gpu-cu12", marker = "sys_platform != 'darwin'" },
@@ -27,11 +27,20 @@ dependencies = [
     { name = "torch-geometric" },
     { name = "torchmetrics" },
     { name = "wandb" },
+    { name = "scikit-learn" },
+    { name = "setuptools" },
+    { name = "torch" },
+    { name = "torch-geometric" },
+    { name = "torchinfo" },
+    { name = "torchmetrics" },
+    { name = "tqdm" },
+    { name = "wandb" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+
 ]
 
 [package.metadata]
@@ -48,6 +57,14 @@ requires-dist = [
     { name = "torch-geometric", specifier = ">=2.7.0" },
     { name = "torchmetrics", specifier = ">=1.4.0" },
     { name = "wandb", specifier = ">=0.18.0" },
+    { name = "scikit-learn", specifier = ">=1.8.0" },
+    { name = "setuptools", specifier = ">=81.0.0" },
+    { name = "torch", specifier = ">=2.11.0" },
+    { name = "torch-geometric", specifier = ">=2.7.0" },
+    { name = "torchinfo", specifier = ">=1.8.0" },
+    { name = "torchmetrics", specifier = ">=1.9.0" },
+    { name = "tqdm", specifier = ">=4.67.3" },
+    { name = "wandb", specifier = ">=0.27.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -2153,6 +2170,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/75/63/b210152635902da7fe79fcdd16517fae108f457a0ed22c737e702a9afbae/torch_geometric-2.7.0.tar.gz", hash = "sha256:f9099e4aece1a9f618c84dbaac33a77f43139736698c7e8bddf3301ef1f2e8d4", size = 876725, upload-time = "2025-10-15T20:48:03.443Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/d3/4dffd7300500465e0b4a2ae917dcb2ce771de0b9a772670365799a27c024/torch_geometric-2.7.0-py3-none-any.whl", hash = "sha256:6e0cd3ad824d484651ef5d308fc66c687bfcf5ba040d56d1e0fe0f81f365e292", size = 1275346, upload-time = "2025-10-15T20:48:01.949Z" },
+]
+
+[[package]]
+name = "torchinfo"
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/d9/2b811d1c0812e9ef23e6cf2dbe022becbe6c5ab065e33fd80ee05c0cd996/torchinfo-1.8.0.tar.gz", hash = "sha256:72e94b0e9a3e64dc583a8e5b7940b8938a1ac0f033f795457f27e6f4e7afa2e9", size = 25880, upload-time = "2023-05-14T19:23:26.377Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/25/973bd6128381951b23cdcd8a9870c6dcfc5606cb864df8eabd82e529f9c1/torchinfo-1.8.0-py3-none-any.whl", hash = "sha256:2e911c2918603f945c26ff21a3a838d12709223dc4ccf243407bce8b6e897b46", size = 23377, upload-time = "2023-05-14T19:23:24.141Z" },
 ]
 
 [[package]]
