@@ -287,14 +287,15 @@ def train(
         ):
             print(f"  {name:<20} AUC {class_auc:.4f} | ACC {class_acc:.4f}")
 
-        save_roc_plot(
-            test.y_true,
-            test.y_score,
-            dataset_info.class_names,
-            test.per_class_auc,
-            test.auc,
-            config.model_dir / "roc_auc.png",
-        )
+        # removed due to being only implemented for one of our datasets
+        # save_roc_plot(
+        #     test.y_true,
+        #     test.y_score,
+        #     dataset_info.class_names,
+        #     test.per_class_auc,
+        #     test.auc,
+        #     config.model_dir / "roc_auc.png",
+        # )
 
         wandb_logger.summary_update(
             {"test/auc": test.auc, "test/acc": test.acc, "best_epoch": best_epoch},
