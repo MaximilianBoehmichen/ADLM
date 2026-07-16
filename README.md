@@ -33,18 +33,19 @@ FractureMNIST3D (extremity CT, 3 classes, 64³).
 Test AUC against peak GPU memory allocated, color by dataset and marker by method, over all
 our runs — small dots are the sweep, outlined markers the reference points from the
 [results table](#results). This is the central figure, and the shape of it is the finding:
-the **naive GNN (triangles) sits far left**, in the same AUC band as the ResNet8 baseline at
+the **naive GNN (triangles) sits far left**, with lower AUC than ResNet8 baseline at
 a fraction of the memory, while the **refined GNN (circles) drifts right** across 5–23 GiB
-without buying proportional AUC — geometry-aware message passing helps, but current designs
-are too expensive. **inr2vec (stars)** is leftmost and lowest. The sections below explain
+without buying proportional AUC — geometry-aware message passing helps a bit, but current designs
+are too expensive. **inr2vec (stars)** is leftmost and has even lower performance. The sections below explain
 what those models are and how to run them.
 
 Per dataset, OrganC and Organ3D saturate near 0.99 for everything, whereas ChestMNIST
-(~0.70 for the GNNs vs 0.776 for ResNet8) and FractureMNIST3D (~0.63) are where the gap
+(~0.71 for the GNNs vs 0.776 for ResNet8) and FractureMNIST3D (~0.63) are where the gap
 actually lives: complex, high-frequency, class-imbalanced images. Memory logging is
 sensitive to the measurement setup and PyG itself may add overhead, so read the relative
 positions, not the absolute values. Performance on FractureMNIST3D may additionally be
 impaired by preprocessing.
+However, rendering an image of the Gaussian Primitives seems to retain almost all performance.
 
 ## Preprocessing
 
@@ -87,9 +88,9 @@ are registered under `--model`:
 - **`resnet8`** — CIFAR-style ResNet8 (~75k parameters) trained on the original pixel grid.
   The established reference; our GNNs are comparable in parameter count.
 - **`resnet8_3d`** — the 3D variant, used for OrganMNIST3D and FractureMNIST3D.
-- **`inr2vec_paper` / `inr2vec_input` / `inr2vec_full`** — the implicit-neural-representation
+- **`inr2vec_paper` (/ `inr2vec_input` / `inr2vec_full`)** — the implicit-neural-representation
   baseline, our compression reference. Similar in size to the Gaussian representation, it
-  requires the least memory of everything we ran but performs worse.
+  requires the least memory of everything we ran but performs worse, while taking longer than GS to preprocess.
 
 Passing `--gaussian-root` makes a ResNet8 train on images *rendered back* from the Gaussian
 graphs instead of the raw pixels — this is what isolates how much signal the compression
@@ -185,7 +186,7 @@ those per-edge descriptors to mixing coefficients, i.e. it derives the weights t
 have given implicitly. It is the same idea made continuous: the kernel is no longer 9 fixed
 taps, but a function evaluated at whatever relative position a neighbor happens to occupy.
 The catch is the price — that per-edge machinery is exactly what pushes the refined GNN's
-memory past ResNet8.
+memory past ResNet8. **However, it notably doesn't scale with larger input sizes/images.**
 
 As with the baselines, all reported runs use **100 epochs** and batch size **128 for the 2D
 datasets, 16 for the 3D ones** — the parser defaults to 50 epochs, so pass both explicitly:
@@ -237,14 +238,11 @@ invocations, one per dataset, already applying `--epochs 100`, `--in-memory`, an
 $ sbatch scripts/gnn.sh "--model pyg --hidden 64 --layers 3"
 ```
 
-`scripts/layerSweep.sh` submits one job per `--layers` value, `scripts/trainDominik.sh` is a
-fixed single-dataset run, and `scripts/linearBaseline.sh` runs `scripts/linear_baseline.py`
-as a lower-bound reference. These predate the final convention and hardcode 50 epochs.
-
 Feature statistics are computed once from the training split and cached under
 `cache/{dataset}/`; for multi-label datasets the BCE `pos_weight` is cached alongside.
 Final test AUC/ACC go through the official MedMNIST `Evaluator`, with a torchmetrics
 fallback when only part of a split has been preprocessed.
+Input features are normalized as much as possible.
 
 ## Results
 
@@ -268,7 +266,7 @@ ResNet8. inr2vec needs the least memory of all but classifies worst.
 PSNR distribution over all preprocessed ChestMNIST images, one histogram per split. The
 distribution is a tight unimodal bump with median ≈ 38.5 dB, and train, val and test lie
 almost exactly on top of each other — the GS compression achieves high reconstruction
-quality and does so uniformly across splits, so no split is systematically advantaged.
+quality and does so uniformly across splits, so no split is systematically advantaged and shows the statistical nature of the preprocessing.
 Together with the render→ResNet8 experiment (0.767 AUC on Gaussian renders vs 0.776 on the
 originals), this says the compression preserves enough discriminative signal, and the
 remaining gap to ResNet8 comes from the model rather than from lost information.
@@ -284,7 +282,7 @@ The Q–Q plot bends away from the line on the left, so that tail is heavier tha
 those outliers are runs that converged badly, not symmetric noise. Two readings follow: the
 representation of an image is a distribution rather than a point, and that variability is
 free data augmentation — multiple GS runs per image yield different graphs of the same
-label, one of our routes against the overfitting that remains the central GNN challenge.
+label, one of the possible routes against the overfitting that remains the central GNN challenge.
 
 ## Key takeaways
 
@@ -307,7 +305,6 @@ initialization to concentrate Gaussians on informative regions.
 
 - Python ≥3.12 (pinned in `.python-version`), package manager **uv** (not pip): `uv sync`
 - Key dependencies: torch, torch-geometric, faiss-cpu (KNN), kornia, medmnist, wandb
-- Git LFS tracks `data/**`
 - Cluster job scripts live in `scripts/` (`baseline.sh`, `gnn.sh`, `run_inr2vec.sh`)
 
 ## Branches not merged into `main`
